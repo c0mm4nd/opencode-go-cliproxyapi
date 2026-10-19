@@ -449,6 +449,35 @@ func ToolResultText(raw json.RawMessage, targetNoun string) (string, *errclass.E
 	return b.String(), nil
 }
 
+// ToolResultParts decodes text and image tool results without losing image data.
+// Chat Completions carries images in a following user message because its tool
+// messages only accept text. Other non-text types remain explicit errors.
+func ToolResultParts(raw json.RawMessage) ([]ContentPart, *errclass.Error) {
+	if !HasContent(raw) {
+		return nil, nil
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return []ContentPart{{Text: text}}, nil
+	}
+	blocks, eErr := decodeClaudeBlocks(raw)
+	if eErr != nil {
+		return nil, eErr
+	}
+	parts := make([]ContentPart, 0, len(blocks))
+	for _, block := range blocks {
+		switch block.Kind {
+		case "text":
+			parts = append(parts, ContentPart{Text: block.Text})
+		case "image":
+			parts = append(parts, ContentPart{ImageURL: block.URL})
+		default:
+			return nil, errclass.Translation(fmt.Sprintf("unsupported tool_result block type %q; tool results support text and images", block.Kind))
+		}
+	}
+	return parts, nil
+}
+
 // RespOutputText flattens Responses function_call_output output content (JSON
 // string or content part array) into one string for target protocol tool results.
 // It accepts part types "input_text" and "text", and returns a translation error
@@ -478,7 +507,6 @@ func RespOutputText(raw json.RawMessage, targetNoun string) (string, *errclass.E
 	}
 	return b.String(), nil
 }
-
 
 // ClaudeImageURL converts an Anthropic image block source into an image
 // URL for OpenAI-style targets, encoding base64 sources as data URLs
@@ -1118,7 +1146,7 @@ type RespItem struct {
 	Summary   []struct {
 		Text string `json:"text"`
 	} `json:"summary,omitempty"`
-	Tools     []RespTool      `json:"tools,omitempty"`
+	Tools []RespTool `json:"tools,omitempty"`
 }
 
 // CCFunction is one Chat Completions tool function definition (decode and

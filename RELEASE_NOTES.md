@@ -1,3 +1,12 @@
+## v0.1.10-image-tools.1 (fork)
+
+- Fix Claude Code requests failing with `unsupported tool_result block type "image"; tool messages carry text only` when routed to Chat Completions models.
+- Preserve tool-result images as original base64 data URLs or URL sources in a following user message labeled with the originating tool call ID. Keep text, error markers, and all parallel tool replies before the image message.
+- Include image tool results in session derivation without rejecting them.
+- Add regression coverage for streaming and non-streaming conversion, parallel results, malformed image sources, and image-sensitive session hashing.
+
+This is a transport compatibility fix; the selected upstream model must support image input. Native Messages and Responses routes retain their existing behavior.
+
 ## What's Changed
 
 Full OpenAI Codex CLI support across all models: multi-agent namespaces, custom programmatic tools (`exec`), tool call results, and reasoning efforts are fully functional.

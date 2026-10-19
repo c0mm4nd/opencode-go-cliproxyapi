@@ -586,7 +586,6 @@ func TestFromResponsesRequest_FunctionCallOutputArray(t *testing.T) {
 	}
 }
 
-
 func TestBuildRequestResponsesVariants(t *testing.T) {
 	t.Run("empty string input yields no messages", func(t *testing.T) {
 		m := mustBuild(t, "openai-response", `{"input":""}`, nil)
@@ -1011,3 +1010,56 @@ func TestResponsesReasoningEffortPassthroughWithoutValidation(t *testing.T) {
 	}
 }
 
+func TestClaudeToolImagesPreserveParallelResults(t *testing.T) {
+	body := `{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"a","name":"Read","input":{}},{"type":"tool_use","id":"b","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":[{"type":"text","text":"caption"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]},{"type":"tool_result","tool_use_id":"b","is_error":true,"content":[{"type":"image","source":{"type":"url","url":"https://example.com/b.png"}}]},{"type":"text","text":"compare"}]}]}`
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			request := strings.Replace(body, `{"messages":`, fmt.Sprintf(`{"stream":%t,"messages":`, stream), 1)
+			out := mustBuild(t, "claude", request, nil)
+			msgs := out["messages"].([]any)
+			if len(msgs) != 4 {
+				t.Fatalf("messages: %v", msgs)
+			}
+			for i, id := range []string{"a", "b"} {
+				m := msgs[i+1].(map[string]any)
+				if m["role"] != "tool" || m["tool_call_id"] != id {
+					t.Fatalf("tool replies must precede user images: %v", msgs)
+				}
+			}
+			if !strings.Contains(msgs[1].(map[string]any)["content"].(string), "caption") {
+				t.Fatal("lost caption")
+			}
+			if !strings.HasPrefix(msgs[2].(map[string]any)["content"].(string), shared.ToolResultErrorPrefix) {
+				t.Fatal("lost is_error")
+			}
+			user := msgs[3].(map[string]any)
+			if user["role"] != "user" {
+				t.Fatal("images require user role")
+			}
+			parts := user["content"].([]any)
+			var urls []string
+			for _, p := range parts {
+				v := p.(map[string]any)
+				if v["type"] == "image_url" {
+					urls = append(urls, v["image_url"].(map[string]any)["url"].(string))
+				}
+			}
+			if len(urls) != 2 || urls[0] != "data:image/png;base64,QUJD" || urls[1] != "https://example.com/b.png" {
+				t.Fatalf("lost images: %v", urls)
+			}
+			if got, _ := out["stream"].(bool); got != stream {
+				t.Fatalf("stream flag changed: %v", out["stream"])
+			}
+		})
+	}
+
+}
+
+func TestClaudeToolImagesRejectMalformedSource(t *testing.T) {
+	for _, source := range []string{`null`, `{"type":"base64"}`, `{"type":"url"}`, `{"type":"s3"}`} {
+		body := `{"messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":[{"type":"image","source":` + source + `}]}]}]}`
+		if _, err := BuildRequest("m", "claude", []byte(body), nil); err == nil {
+			t.Fatalf("accepted malformed image: %s", source)
+		}
+	}
+}

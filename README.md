@@ -1,5 +1,9 @@
 # OpenCode Go CLIProxyAPI Plugin
 
+> **Fork with Claude Code image tool-result support.** Based on upstream v0.1.10.
+> See [fork notes](FORK_NOTES.md) for the fix, installation, and validation.
+
+
 A native dynamic Go plugin for [CLIProxyAPI](https://help.router-for.me/plugin/development) that exposes OpenCode Go as a single provider (`opencode-go`).
 
 The plugin unifies model discovery, protocol translation, and execution across OpenCode Go's upstream endpoints while leveraging CLIProxyAPI's built-in authentication, scheduling, keys rotation, and cooldown management.
