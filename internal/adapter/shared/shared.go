@@ -432,26 +432,35 @@ func ToolResultText(raw json.RawMessage, targetNoun string) (string, *errclass.E
 		return s, nil
 	}
 	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		ToolName string `json:"tool_name"`
 	}
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		return "", errclass.Translation("tool_result content must be a string or an array of blocks")
 	}
 	var b strings.Builder
 	for _, blk := range blocks {
-		if blk.Type != "text" {
+		switch blk.Type {
+		case "text":
+			b.WriteString(blk.Text)
+		case "tool_reference":
+			if blk.ToolName != "" {
+				b.WriteString(fmt.Sprintf("[tool: %s]", blk.ToolName))
+			} else {
+				b.WriteString("[tool reference]")
+			}
+		default:
 			return "", errclass.Translation(fmt.Sprintf(
 				"unsupported tool_result block type %q; %s", blk.Type, targetNoun))
 		}
-		b.WriteString(blk.Text)
 	}
 	return b.String(), nil
 }
 
-// ToolResultParts decodes text and image tool results without losing image data.
-// Chat Completions carries images in a following user message because its tool
-// messages only accept text. Other non-text types remain explicit errors.
+// ToolResultParts preserves images while using ToolResultText for every
+// non-image block, including tool_reference markers. Images use the same
+// source validation as ordinary Claude message content.
 func ToolResultParts(raw json.RawMessage) ([]ContentPart, *errclass.Error) {
 	if !HasContent(raw) {
 		return nil, nil
@@ -460,19 +469,34 @@ func ToolResultParts(raw json.RawMessage) ([]ContentPart, *errclass.Error) {
 	if json.Unmarshal(raw, &text) == nil {
 		return []ContentPart{{Text: text}}, nil
 	}
-	blocks, eErr := decodeClaudeBlocks(raw)
-	if eErr != nil {
-		return nil, eErr
+	var blocks []json.RawMessage
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil, errclass.Translation("tool_result content must be a string or an array of blocks")
 	}
 	parts := make([]ContentPart, 0, len(blocks))
 	for _, block := range blocks {
-		switch block.Kind {
-		case "text":
-			parts = append(parts, ContentPart{Text: block.Text})
-		case "image":
-			parts = append(parts, ContentPart{ImageURL: block.URL})
-		default:
-			return nil, errclass.Translation(fmt.Sprintf("unsupported tool_result block type %q; tool results support text and images", block.Kind))
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(block, &kind) != nil {
+			return nil, errclass.Translation("malformed content block")
+		}
+		single := make(json.RawMessage, 0, len(block)+2)
+		single = append(single, '[')
+		single = append(single, block...)
+		single = append(single, ']')
+		if kind.Type == "image" {
+			images, eErr := decodeClaudeBlocks(single)
+			if eErr != nil {
+				return nil, eErr
+			}
+			parts = append(parts, ContentPart{ImageURL: images[0].URL})
+		} else {
+			text, eErr := ToolResultText(single, "tool results support text, tool references and images")
+			if eErr != nil {
+				return nil, eErr
+			}
+			parts = append(parts, ContentPart{Text: text})
 		}
 	}
 	return parts, nil
@@ -507,6 +531,7 @@ func RespOutputText(raw json.RawMessage, targetNoun string) (string, *errclass.E
 	}
 	return b.String(), nil
 }
+
 
 // ClaudeImageURL converts an Anthropic image block source into an image
 // URL for OpenAI-style targets, encoding base64 sources as data URLs
@@ -1146,7 +1171,7 @@ type RespItem struct {
 	Summary   []struct {
 		Text string `json:"text"`
 	} `json:"summary,omitempty"`
-	Tools []RespTool `json:"tools,omitempty"`
+	Tools     []RespTool      `json:"tools,omitempty"`
 }
 
 // CCFunction is one Chat Completions tool function definition (decode and

@@ -1,6 +1,6 @@
 # OpenCode Go CLIProxyAPI Plugin
 
-> **Fork with Claude Code image tool-result support.** Based on upstream v0.2.0.
+> **Fork with Claude Code image tool-result support.** Based on upstream v0.2.1.
 > See [fork notes](FORK_NOTES.md) for the fix, installation, and validation.
 
 
