@@ -16,7 +16,7 @@ No OCR, image removal, or model substitution is involved. The upstream model mus
 
 Download the Linux amd64 shared library and `SHA256SUMS` from this fork's GitHub release, verify the checksum, back up the installed library, and replace `plugins/linux/amd64/opencode-go-cliproxyapi.so`. Restart CLIProxyAPI to load it. For Docker deployments, replace the file in the host's mounted plugins directory and restart the CPA container.
 
-The provided binary was built with Go 1.26.8, requires Linux amd64 and glibc 2.34 or newer, and was verified with CPA v8.0.15 on Debian 12. It is not an Alpine/musl binary. Its adapter implementation matches this branch; subsequent publication-only changes add documentation and streaming regression coverage.
+The provided binary was built with Go 1.26.8, requires Linux amd64 and glibc 2.34 or newer, and was verified with CPA v8.0.33 on Debian 12. It is not an Alpine/musl binary. Its source matches this release branch.
 
 ## Validation
 
@@ -32,3 +32,7 @@ CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -ldflags "-s -w" -o opencod
 ```
 
 Keep the backup for rollback. Check whether future upstream releases contain this fix before replacing the fork's library.
+
+## Upstream v0.2.0 migration
+
+This release merges upstream v0.2.0 and retains the image tool-result fix. It uses the CPA v8 SDK and native quota providers (`GET /v0/management/quota/providers`, `POST /v0/management/quota/fetch`). Update the management dashboard to a version supporting generic quota controls. The plugin-specific quota page and old custom quota endpoint were removed upstream. Existing credential identities and custom labels are preserved.
