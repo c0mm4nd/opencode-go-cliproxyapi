@@ -1,7 +1,7 @@
 # OpenCode Go CLIProxyAPI Plugin
 
-> **Fork with Claude Code image tool-result support.** Based on upstream v0.2.1.
-> See [fork notes](FORK_NOTES.md) for the fix, installation, and validation.
+> **Synced with upstream v0.2.2.** The Claude Code image tool-result fix was merged upstream in [PR #16](https://github.com/massiveits/opencode-go-cliproxyapi/pull/16).
+> Use the [official upstream release](https://github.com/massiveits/opencode-go-cliproxyapi/releases/tag/v0.2.2); see [fork notes](FORK_NOTES.md) for history and validation.
 
 
 A native dynamic Go plugin for [CLIProxyAPI](https://help.router-for.me/plugin/development) that exposes OpenCode Go as a single provider (`opencode-go`).
