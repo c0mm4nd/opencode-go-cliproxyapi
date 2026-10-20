@@ -2,6 +2,8 @@
 
 ### Bug Fixes
 
+- Preserve Chat Completions `reasoning_content` as Claude thinking blocks in streaming and non-streaming responses, and restore it when replaying assistant history with tool results. This prevents thinking-mode continuation failures caused by dropped reasoning. Explicit enabled/disabled thinking controls are forwarded on DeepSeek Chat Completions routes. Encrypted redacted thinking remains omitted; previously lost history cannot be reconstructed.
+
 - Preserve Claude image tool results when routing to Chat Completions: retain images in an associated user message after tool replies, preserve text, tool references and error markers, and include images in session derivation. The selected upstream model must support image input.
 
 Special thanks to @c0mm4nd in #16.

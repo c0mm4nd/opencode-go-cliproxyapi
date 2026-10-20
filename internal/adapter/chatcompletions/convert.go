@@ -11,8 +11,9 @@ import (
 // ---- upstream Chat Completions response shapes (FR-006) ----
 
 type ccRespMessage struct {
-	Content   json.RawMessage     `json:"content"` // JSON string or part array
-	ToolCalls []shared.CCToolCall `json:"tool_calls"`
+	ReasoningContent string              `json:"reasoning_content"`
+	Content          json.RawMessage     `json:"content"` // JSON string or part array
+	ToolCalls        []shared.CCToolCall `json:"tool_calls"`
 }
 
 type ccChoice struct {
@@ -99,6 +100,9 @@ func chatToClaude(body []byte) ([]byte, *errclass.Error) {
 	blocks, eErr := ccContentToBlocks(choice.Message.Content)
 	if eErr != nil {
 		return nil, eErr
+	}
+	if choice.Message.ReasoningContent != "" {
+		blocks = append([]claudeBlock{{"type": "thinking", "thinking": choice.Message.ReasoningContent, "signature": ""}}, blocks...)
 	}
 	toolUse, eErr := claudeToolUseBlocks(choice.Message.ToolCalls)
 	if eErr != nil {

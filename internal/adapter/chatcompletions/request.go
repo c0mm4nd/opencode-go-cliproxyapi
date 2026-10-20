@@ -124,13 +124,21 @@ type ccContentPart struct {
 }
 
 type ccMessage struct {
-	Role       string              `json:"role"`
-	Content    any                 `json:"content"` // string, []ccContentPart, or nil
-	ToolCalls  []shared.CCToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string              `json:"tool_call_id,omitempty"`
+	ReasoningContent *string             `json:"reasoning_content,omitempty"`
+	Role             string              `json:"role"`
+	Content          any                 `json:"content"` // string, []ccContentPart, or nil
+	ToolCalls        []shared.CCToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
+}
+
+// ccThinking is DeepSeek's explicit mode switch. reasoning_effort controls
+// effort only and does not enable thinking on an otherwise non-thinking route.
+type ccThinking struct {
+	Type string `json:"type"`
 }
 
 type ccRequest struct {
+	Thinking          *ccThinking     `json:"thinking,omitempty"`
 	Model             string          `json:"model"`
 	Messages          []ccMessage     `json:"messages"`
 	MaxTokens         *int64          `json:"max_tokens,omitempty"`
@@ -184,6 +192,9 @@ func claudeToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSuppo
 	}
 	if shared.ThinkingEnabled(src.Thinking) {
 		out.ReasoningEffort = thinking.EffortFromBudget(src.Thinking.BudgetTokens, ts)
+	}
+	if strings.HasPrefix(strings.ToLower(upstreamModel), "deepseek-") && src.Thinking != nil && (src.Thinking.Type == "enabled" || src.Thinking.Type == "disabled") {
+		out.Thinking = &ccThinking{Type: src.Thinking.Type}
 	}
 	applyToolChoiceCC(out, src.ToolChoiceKind, src.ToolChoiceName)
 	if src.System != "" {
@@ -295,12 +306,9 @@ func claudeUserMessages(m *shared.ClaudeMessageRecord) ([]ccMessage, *errclass.E
 	return msgs, nil
 }
 
-// claudeAssistantMessage converts an assistant turn: text blocks join
-// the message content, tool_use blocks become tool_calls. Historical
-// thinking and redacted_thinking blocks have no Chat Completions
-// representation and are omitted by the FR-005 explicit omission policy
-// (the forward-looking control maps via effortFromBudget instead; the
-// redacted variant is pure encrypted metadata). Returns nil for empty turns.
+// claudeAssistantMessage preserves plaintext thinking as reasoning_content so
+// thinking-mode tool turns can be replayed. Encrypted redacted_thinking cannot
+// be represented by Chat Completions and remains omitted.
 func claudeAssistantMessage(m *shared.ClaudeMessageRecord) (*ccMessage, *errclass.Error) {
 	msg := &ccMessage{Role: "assistant"}
 	var sb strings.Builder
@@ -310,8 +318,15 @@ func claudeAssistantMessage(m *shared.ClaudeMessageRecord) (*ccMessage, *errclas
 		switch blk.Kind {
 		case "text":
 			sb.WriteString(blk.Text)
-		case "thinking", "redacted_thinking":
-			// omitted: no Chat Completions equivalent (FR-005 policy)
+		case "thinking":
+			if blk.Thinking != nil {
+				if msg.ReasoningContent == nil {
+					msg.ReasoningContent = new(string)
+				}
+				*msg.ReasoningContent += *blk.Thinking
+			}
+		case "redacted_thinking":
+			// Encrypted metadata has no plaintext reasoning equivalent.
 		case "tool_use":
 			tc := shared.CCToolCall{ID: blk.CallID, Type: "function"}
 			tc.Function.Name = blk.Name
@@ -324,7 +339,7 @@ func claudeAssistantMessage(m *shared.ClaudeMessageRecord) (*ccMessage, *errclas
 	if sb.Len() > 0 {
 		msg.Content = sb.String()
 	}
-	if msg.Content == nil && len(msg.ToolCalls) == 0 {
+	if msg.Content == nil && len(msg.ToolCalls) == 0 && msg.ReasoningContent == nil {
 		return nil, nil
 	}
 	return msg, nil
