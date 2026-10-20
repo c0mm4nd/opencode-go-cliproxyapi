@@ -976,3 +976,96 @@ func TestLiveClaudeReasoningRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// TestLiveClaudeMissingReasoningHistory covers a mixed tool history: the first
+// assistant call has no retained thinking, while a later call does. This used
+// to fail even though the most recent assistant's reasoning was passed back.
+func TestLiveClaudeMissingReasoningHistory(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			payload := map[string]any{
+				"model": modelID("deepseek-v4.1-flash"), "max_tokens": 1024, "stream": stream,
+				"thinking": map[string]any{"type": "enabled", "budget_tokens": 512},
+				"tools":    []any{map[string]any{"name": "get_token", "input_schema": map[string]any{"type": "object", "properties": map[string]any{}}}},
+				"messages": []any{
+					map[string]any{"role": "user", "content": "Call get_token twice sequentially. Then answer only history-ok."},
+					map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "call_first", "name": "get_token", "input": map[string]any{}}}},
+					map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "call_first", "content": "token1"}}},
+					map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "thinking", "thinking": "Need a second token.", "signature": ""}, map[string]any{"type": "tool_use", "id": "call_second", "name": "get_token", "input": map[string]any{}}}},
+					map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "call_second", "content": "token2"}}},
+				},
+			}
+			b, _ := json.Marshal(payload)
+			req, err := http.NewRequest(http.MethodPost, cpaHost+"/v1/messages", bytes.NewReader(b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer "+cpaKey)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("anthropic-version", "2023-06-01")
+			resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != 200 {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+				t.Fatalf("HTTP %d: %s", resp.StatusCode, body)
+			}
+			var text strings.Builder
+			if !stream {
+				var result struct {
+					Content []struct {
+						Type string
+						Text string
+					}
+				}
+				if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+					t.Fatal(err)
+				}
+				for _, b := range result.Content {
+					if b.Type == "text" {
+						text.WriteString(b.Text)
+					}
+				}
+			} else {
+				scan := bufio.NewScanner(resp.Body)
+				scan.Buffer(make([]byte, 4096), 1024*1024)
+				stopped := false
+				for scan.Scan() {
+					line := scan.Text()
+					if !strings.HasPrefix(line, "data:") {
+						continue
+					}
+					var e struct {
+						Type  string
+						Delta struct {
+							Type string
+							Text string
+						}
+						Error any
+					}
+					if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &e); err != nil {
+						t.Fatal(err)
+					}
+					if e.Type == "error" {
+						t.Fatalf("stream error: %v", e.Error)
+					}
+					if e.Delta.Type == "text_delta" {
+						text.WriteString(e.Delta.Text)
+					}
+					stopped = stopped || e.Type == "message_stop"
+				}
+				if err := scan.Err(); err != nil {
+					t.Fatal(err)
+				}
+				if !stopped {
+					t.Fatal("missing message_stop")
+				}
+			}
+			if !strings.Contains(text.String(), "history-ok") {
+				t.Fatalf("unexpected answer: %q", text.String())
+			}
+		})
+	}
+}
