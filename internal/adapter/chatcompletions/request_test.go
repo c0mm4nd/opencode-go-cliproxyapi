@@ -312,9 +312,9 @@ func TestBuildRequestClaude(t *testing.T) {
 	if user["content"] != "more" {
 		t.Fatalf("post-result text wrong: %v", user)
 	}
-	// Thinking is preserved separately from content and tool calls.
+	// thinking block dropped, tool_use kept: content null + tool_calls.
 	last := msgs[5].(map[string]any)
-	if last["role"] != "assistant" || last["content"] != nil || last["reasoning_content"] != "hmm" {
+	if last["role"] != "assistant" || last["content"] != nil {
 		t.Fatalf("thinking-only content wrong: %v", last)
 	}
 	lastCall := last["tool_calls"].([]any)[0].(map[string]any)
@@ -449,16 +449,16 @@ func TestBuildRequestClaudeVariants(t *testing.T) {
 			t.Fatalf("assistant string content lost: %v", a)
 		}
 	})
-	t.Run("thinking-only assistant preserved", func(t *testing.T) {
+	t.Run("thinking-only assistant dropped", func(t *testing.T) {
 		m := mustBuild(t, "claude",
 			`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"}]}]}`, nil)
-		if msgs := m["messages"].([]any); len(msgs) != 1 || msgs[0].(map[string]any)["reasoning_content"] != "hmm" {
-			t.Fatalf("thinking-only assistant not preserved: %v", msgs)
+		if msgs := m["messages"].([]any); len(msgs) != 0 {
+			t.Fatalf("thinking-only assistant not dropped: %v", msgs)
 		}
 	})
 	// FR-005 omission policy parity: redacted_thinking is encrypted
 	// reasoning metadata with no Chat Completions representable payload —
-	// omitted while plaintext thinking is retained, never a conversion failure (mirrors the
+	// omitted like plain thinking, never a conversion failure (mirrors the
 	// sibling Messages/Responses-route converters).
 	t.Run("redacted_thinking omitted alongside thinking", func(t *testing.T) {
 		m := mustBuild(t, "claude",
@@ -468,8 +468,8 @@ func TestBuildRequestClaudeVariants(t *testing.T) {
 			t.Fatalf("want one assistant message, got %d: %v", len(msgs), msgs)
 		}
 		a := msgs[0].(map[string]any)
-		if a["content"] != "answer" || a["reasoning_content"] != "hmm" {
-			t.Fatalf("plaintext thinking or text lost: %v", a)
+		if a["content"] != "answer" {
+			t.Fatalf("thinking blocks not omitted or text lost: %v", a)
 		}
 	})
 	t.Run("redacted_thinking-only assistant dropped", func(t *testing.T) {

@@ -25,38 +25,36 @@ type StreamConverter struct {
 	lineBuf      []byte // partial SSE line carried across Feed calls
 	done         bool
 
-	started       bool // message_start / first chunk seen
-	id            string
-	model         string
-	claudeEm      shared.ClaudeEventEmitter // canonical Messages frames bound to first-chunk identity
-	thinkingOpen  bool
-	thinkingIndex int
-	textOpen      bool // claude text content_block open
-	textIndex     int  // claude index of the currently-open text block
-	nextIndex     int  // next output/block index
-	msgIndex      int  // announced assistant message item index (-1 until text)
-	tools         map[int64]*streamTool
-	toolOrder     []int64 // upstream tool_call indices in first-arrival order
-	toolsSeen     bool    // any tool_calls entry observed (terminal-reason precedence)
-	usage         *ccUsage
-	finished      bool            // finish_reason processed
-	heldFinish    string          // finish_reason awaiting terminal emission (flushed on the next data line or [DONE], so the standard include_usage trailer lands in the terminal event; Flush covers close-without-[DONE])
-	terminalSent  bool            // claudeTerminal already emitted message_delta (Flush must still close with message_stop)
-	flushed       bool            // Flush already ran (one-shot guard)
-	respText      strings.Builder // openai-response accumulated output_text
-	respTools     *shared.ResponseTools
+	started      bool // message_start / first chunk seen
+	id           string
+	model        string
+	claudeEm     shared.ClaudeEventEmitter // canonical Messages frames bound to first-chunk identity
+	textOpen     bool                      // claude text content_block open
+	textIndex    int                       // claude index of the currently-open text block
+	nextIndex    int                       // next output/block index
+	msgIndex     int                       // announced assistant message item index (-1 until text)
+	tools        map[int64]*streamTool
+	toolOrder    []int64 // upstream tool_call indices in first-arrival order
+	toolsSeen    bool    // any tool_calls entry observed (terminal-reason precedence)
+	usage        *ccUsage
+	finished     bool            // finish_reason processed
+	heldFinish   string          // finish_reason awaiting terminal emission (flushed on the next data line or [DONE], so the standard include_usage trailer lands in the terminal event; Flush covers close-without-[DONE])
+	terminalSent bool            // claudeTerminal already emitted message_delta (Flush must still close with message_stop)
+	flushed      bool            // Flush already ran (one-shot guard)
+	respText     strings.Builder // openai-response accumulated output_text
+	respTools    *shared.ResponseTools
 }
 
 // streamTool accumulates one upstream tool_calls index; args collects
 // argument fragments so the terminal response.completed output carries the
 // complete call (FR-006).
 type streamTool struct {
-	blockIndex    int
-	id            string
-	name          string
-	args          strings.Builder
-	stopped       bool // content_block_stop emitted
-	customEmitted int  // custom_tool_call_input bytes already emitted as deltas
+	blockIndex int
+	id         string
+	name       string
+	args       strings.Builder
+	stopped    bool // content_block_stop emitted
+	customEmitted int // custom_tool_call_input bytes already emitted as deltas
 }
 
 // NewStreamConverter returns a converter translating Chat Completions
@@ -192,9 +190,8 @@ type ccToolCallDelta struct {
 }
 
 type ccDelta struct {
-	ReasoningContent string            `json:"reasoning_content"`
-	Content          string            `json:"content"`
-	ToolCalls        []ccToolCallDelta `json:"tool_calls"`
+	Content   string            `json:"content"`
+	ToolCalls []ccToolCallDelta `json:"tool_calls"`
 }
 
 type ccChunkChoice struct {
@@ -316,16 +313,6 @@ func (sc *StreamConverter) claudeLine(line string) ([][]byte, *errclass.Error) {
 		return events, nil
 	}
 	choice := chunk.Choices[0]
-	if choice.Delta.ReasoningContent != "" {
-		if !sc.thinkingOpen {
-			events = append(events, sc.stopBlocks()...)
-			sc.thinkingIndex = sc.nextIndex
-			sc.nextIndex++
-			sc.thinkingOpen = true
-			events = append(events, sc.claudeEm.ContentBlockStart(sc.thinkingIndex, "thinking", map[string]any{"thinking": "", "signature": ""}))
-		}
-		events = append(events, sc.claudeEm.ContentBlockDelta(sc.thinkingIndex, map[string]any{"type": "thinking_delta", "thinking": choice.Delta.ReasoningContent}))
-	}
 	if choice.Delta.Content != "" {
 		// The text block opens lazily on first non-empty content so pure
 		// tool-call streams carry no phantom empty text block, matching
@@ -412,10 +399,6 @@ func (sc *StreamConverter) stopText() [][]byte {
 // overlap) and again (as a no-op) on finish_reason and [DONE].
 func (sc *StreamConverter) stopBlocks() [][]byte {
 	var events [][]byte
-	if sc.thinkingOpen {
-		sc.thinkingOpen = false
-		events = append(events, sc.claudeEm.ContentBlockStop(sc.thinkingIndex))
-	}
 	events = append(events, sc.stopText()...)
 	for _, idx := range sc.toolOrder {
 		t := sc.tools[idx]

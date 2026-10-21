@@ -108,20 +108,12 @@ func (m *Manager) handleExecute(request []byte) ([]byte, error) {
 	debugTrace("executor sending non-stream url=%s body_len=%d", url, len(upstreamBody))
 	ctx, cancel := context.WithTimeout(context.Background(), res.cfg.RequestTimeout)
 	defer cancel()
-	upstreamRequest := pluginapi.HTTPRequest{
+	resp, err := m.bridge.Do(ctx, pluginapi.HTTPRequest{
 		Method:  http.MethodPost,
 		URL:     url,
 		Headers: upstreamAuthHeaders(res.rec.Protocol, res.key, sessionID),
 		Body:    upstreamBody,
-	}
-	resp, err := m.bridge.Do(ctx, upstreamRequest)
-	if err == nil && res.rec.Protocol == catalog.RouteChatCompletions {
-		if retry, ok := chatcompletions.MissingReasoningRetry(resp.StatusCode, resp.Body, upstreamBody); ok {
-			_ = m.bridge.Log("warn", "retrying missing reasoning_content with blank placeholders on historical tool calls", nil)
-			upstreamRequest.Body = retry
-			resp, err = m.bridge.Do(ctx, upstreamRequest)
-		}
-	}
+	})
 	if err != nil {
 		debugTrace("executor non-stream network error: %v", err)
 		return classEnvelope(errclass.FromNetwork(err)), nil
@@ -382,30 +374,25 @@ func (m *Manager) executeStream(req executorRequest) ([]byte, error) {
 	debugTrace("executor sending stream url=%s body_len=%d", url, len(upstreamBody))
 	ctx, cancel := context.WithTimeout(context.Background(), res.cfg.RequestTimeout)
 	defer cancel()
-	upstreamRequest := pluginapi.HTTPRequest{
+	st, _, id, err := m.bridge.DoStream(ctx, pluginapi.HTTPRequest{
 		Method:  http.MethodPost,
 		URL:     url,
 		Headers: upstreamAuthHeaders(res.rec.Protocol, res.key, sessionID),
 		Body:    upstreamBody,
+	})
+	debugTrace("executor stream DoStream status=%d upstreamID=%s err=%v", st, id, err)
+	if err != nil {
+		return classEnvelope(errclass.FromNetwork(err)), nil
 	}
-	var id string
-	for attempt := 0; ; attempt++ {
-		st, _, upstreamID, err := m.bridge.DoStream(ctx, upstreamRequest)
-		id = upstreamID
-		debugTrace("executor stream DoStream status=%d upstreamID=%s err=%v", st, id, err)
-		if err != nil {
-			return classEnvelope(errclass.FromNetwork(err)), nil
-		}
-		if st < 400 {
-			break
-		}
-		body := m.readStreamError(ctx, id, res.cfg.MaxResponseBytes)
-		if attempt == 0 && res.rec.Protocol == catalog.RouteChatCompletions {
-			if retry, ok := chatcompletions.MissingReasoningRetry(st, body, upstreamBody); ok {
-				_ = m.bridge.Log("warn", "retrying missing reasoning_content with blank placeholders on historical tool calls", nil)
-				upstreamRequest.Body = retry
-				continue
-			}
+	if st >= 400 {
+		var body []byte
+		if id != "" {
+			watchdog := time.AfterFunc(res.cfg.RequestTimeout, func() {
+				_ = m.bridge.StreamClose(id)
+			})
+			body, _, _, _ = m.bridge.StreamRead(id)
+			watchdog.Stop()
+			_ = m.bridge.StreamClose(id)
 		}
 		return classEnvelope(shared.UpstreamStatusError(st, body)), nil
 	}
@@ -421,28 +408,6 @@ func (m *Manager) executeStream(req executorRequest) ([]byte, error) {
 		m.pumpStream(downID, id, res, req.SourceFormat)
 	}()
 	return okEnvelope(struct{}{}), nil
-}
-
-// Read a rejected stream before deciding whether it can be retried. No bytes
-// have reached the client. The same deadline covers both attempts.
-func (m *Manager) readStreamError(ctx context.Context, id string, limit int64) []byte {
-	if id == "" {
-		return nil
-	}
-	defer m.bridge.StreamClose(id)
-	stop := context.AfterFunc(ctx, func() { _ = m.bridge.StreamClose(id) })
-	defer stop()
-	var body []byte
-	for {
-		chunk, readError, done, err := m.bridge.StreamRead(id)
-		if int64(len(body))+int64(len(chunk)) > limit {
-			return body
-		}
-		body = append(body, chunk...)
-		if done || err != nil || readError != "" || ctx.Err() != nil || len(chunk) == 0 || json.Valid(body) {
-			return body
-		}
-	}
 }
 
 func (m *Manager) pumpStream(downID, upstreamID string, res *resolvedExecution, sourceFormat string) {

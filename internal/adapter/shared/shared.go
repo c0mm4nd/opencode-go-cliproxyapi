@@ -532,6 +532,7 @@ func RespOutputText(raw json.RawMessage, targetNoun string) (string, *errclass.E
 	return b.String(), nil
 }
 
+
 // ClaudeImageURL converts an Anthropic image block source into an image
 // URL for OpenAI-style targets, encoding base64 sources as data URLs
 // (FR-005 multimodal preservation). Strict validation shared by every
@@ -1170,7 +1171,7 @@ type RespItem struct {
 	Summary   []struct {
 		Text string `json:"text"`
 	} `json:"summary,omitempty"`
-	Tools []RespTool `json:"tools,omitempty"`
+	Tools     []RespTool      `json:"tools,omitempty"`
 }
 
 // CCFunction is one Chat Completions tool function definition (decode and
@@ -1351,15 +1352,14 @@ func ThinkingEnabled(t *ClaudeThinking) bool {
 // through ClaudeImageURL; tool_use Input and tool_result Result stay raw
 // so each target renderer applies its own vocabulary and policies.
 type ClaudeBlock struct {
-	Kind     string          // text, image, tool_use, tool_result, thinking, redacted_thinking, or an unknown wire type
-	Text     string          // text blocks
-	Thinking *string         // plaintext thinking, including an explicitly empty value
-	URL      string          // image blocks: resolved http(s)/data URL
-	CallID   string          // tool_use "id" / tool_result "tool_use_id"
-	Name     string          // tool_use name
-	Input    json.RawMessage // tool_use arguments (absent → nil)
-	Result   json.RawMessage // tool_result payload (string or block array)
-	IsError  bool            // tool_result is_error flag
+	Kind    string          // text, image, tool_use, tool_result, thinking, redacted_thinking, or an unknown wire type
+	Text    string          // text blocks
+	URL     string          // image blocks: resolved http(s)/data URL
+	CallID  string          // tool_use "id" / tool_result "tool_use_id"
+	Name    string          // tool_use name
+	Input   json.RawMessage // tool_use arguments (absent → nil)
+	Result  json.RawMessage // tool_result payload (string or block array)
+	IsError bool            // tool_result is_error flag
 }
 
 // ClaudeMessageRecord is one Anthropic Messages message turn: Content is
@@ -1399,10 +1399,9 @@ type claudeWireMessage struct {
 
 // claudeWireBlock mirrors the inbound Anthropic block shape (decode-only).
 type claudeWireBlock struct {
-	Type     string  `json:"type"`
-	Text     string  `json:"text"`
-	Thinking *string `json:"thinking"`
-	Source   *struct {
+	Type   string `json:"type"`
+	Text   string `json:"text"`
+	Source *struct {
 		Type      string `json:"type"` // base64 | url
 		MediaType string `json:"media_type"`
 		Data      string `json:"data"`
@@ -1495,7 +1494,7 @@ func decodeClaudeBlocks(raw json.RawMessage) ([]ClaudeBlock, *errclass.Error) {
 			return nil, errclass.Translation("malformed content block")
 		}
 		blk := ClaudeBlock{
-			Kind: wb.Type, Text: wb.Text, Thinking: wb.Thinking,
+			Kind: wb.Type, Text: wb.Text,
 			Name: wb.Name, Input: wb.Input,
 			Result: wb.Content, IsError: wb.IsError,
 		}
