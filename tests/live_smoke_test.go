@@ -11,9 +11,89 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// Opt in only against an isolated CPA and a controllable local upstream.
+// Do not flood a production account to verify the limiter.
+func TestLiveGLMAccountConcurrency(t *testing.T) {
+	statsURL := os.Getenv("CPA_CONCURRENCY_STATS_URL")
+	if statsURL == "" {
+		t.Skip("set CPA_CONCURRENCY_STATS_URL for the isolated upstream fixture")
+	}
+	expectedPeak := 6
+	if value := os.Getenv("CPA_CONCURRENCY_EXPECTED_PEAK"); value != "" {
+		if _, err := fmt.Sscan(value, &expectedPeak); err != nil || expectedPeak <= 0 {
+			t.Fatal("invalid CPA_CONCURRENCY_EXPECTED_PEAK")
+		}
+	}
+	client := &http.Client{Timeout: 90 * time.Second}
+	var wg sync.WaitGroup
+	errors := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			model := modelID("glm-5.3")
+			if i%2 == 1 {
+				model = modelID("glm-5.3-flash")
+			}
+			path := "/v1/chat/completions"
+			stream := i%3 == 0
+			body := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": fmt.Sprintf("concurrency-fixture-%d-%d", time.Now().UnixNano(), i)}}, "max_tokens": 64, "stream": stream}
+			if i%2 == 1 {
+				path = "/v1/messages"
+			}
+			raw, _ := json.Marshal(body)
+			req, _ := http.NewRequest(http.MethodPost, cpaHost+path, bytes.NewReader(raw))
+			req.Header.Set("Authorization", "Bearer "+cpaKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				errors <- err
+				return
+			}
+			defer resp.Body.Close()
+			out, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errors <- err
+				return
+			}
+			if resp.StatusCode != 200 || bytes.Contains(out, []byte(`"type":"error"`)) || bytes.Contains(out, []byte(`"error":`)) {
+				errors <- fmt.Errorf("request %d: status %d: %.300s", i, resp.StatusCode, out)
+				return
+			}
+			if stream && !bytes.Contains(out, []byte("[DONE]")) && !bytes.Contains(out, []byte("message_stop")) {
+				errors <- fmt.Errorf("request %d: missing stream terminal", i)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+	resp, err := client.Get(statsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var stats struct {
+		Peak      int `json:"peak"`
+		Completed int `json:"completed"`
+		Rejected  int `json:"rejected"`
+		Keys      int `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Peak != expectedPeak || stats.Completed != 8 || stats.Rejected != 0 || stats.Keys != 2 {
+		t.Fatalf("account concurrency fixture: %+v", stats)
+	}
+	t.Logf("shared account across 2 keys, GLM models, streams and client protocols: peak=%d completed=%d rejected=%d", stats.Peak, stats.Completed, stats.Rejected)
+}
 
 var (
 	cpaHost   = envOrDefault("CPA_HOST", "http://localhost:8317")

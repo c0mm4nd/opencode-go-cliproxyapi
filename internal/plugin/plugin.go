@@ -27,7 +27,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-cliproxyapi"
-	pluginVersion = "0.2.2-reasoning.2"
+	pluginVersion = "0.2.2-glm-concurrency.1"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -44,7 +44,10 @@ const registerRefreshTimeout = 10 * time.Second
 // Manager owns dispatcher state (config snapshot, catalog manager, refresh
 // loop) and routes every RPC method. Safe for concurrent HandleCall use.
 type Manager struct {
-	bridge *HostBridge // immutable after NewManager
+	bridge           *HostBridge // immutable after NewManager
+	limiter          accountLimiter
+	executionContext context.Context
+	cancelExecutions context.CancelFunc
 
 	// lifeMu serializes whole register/reconfigure/shutdown sequences so
 	// their stop-wait-install steps cannot interleave into orphaned tickers.
@@ -61,7 +64,8 @@ type Manager struct {
 
 // NewManager returns a dispatcher whose outbound traffic flows through bridge.
 func NewManager(bridge *HostBridge) *Manager {
-	return &Manager{bridge: bridge}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Manager{bridge: bridge, executionContext: ctx, cancelExecutions: cancel}
 }
 
 // HandleCall dispatches one RPC method and returns envelope bytes. Handler
@@ -189,10 +193,12 @@ type registrationResult struct {
 
 func pluginConfigFields() []pluginapi.ConfigField {
 	return []pluginapi.ConfigField{
+		{Name: "glm-max-in-flight", Type: pluginapi.ConfigFieldTypeInteger, Description: "Concurrent GLM requests per account/group, default 6; any non-negative integer, 0 disables the limit."},
+		{Name: "glm-queue-timeout", Type: pluginapi.ConfigFieldTypeString, Description: "Maximum GLM slot wait, default 30s; also bounded by request-timeout."},
 		{
 			Name:        "api-keys",
 			Type:        pluginapi.ConfigFieldTypeArray,
-			Description: "List of OpenCode Go API keys (`- value: ...`, optional `name: Personal`). Supports ${ENV_VAR} expansion.",
+			Description: "List of OpenCode Go API keys (`- value: ...`, optional name and concurrency-group for keys sharing a workspace). Supports ${ENV_VAR} expansion.",
 		},
 		{
 			Name:        "base-url",
@@ -445,6 +451,9 @@ var shutdownDrainTimeout = 15 * time.Second
 func (m *Manager) handleShutdown() ([]byte, error) {
 	m.lifeMu.Lock()
 	defer m.lifeMu.Unlock()
+	if m.cancelExecutions != nil {
+		m.cancelExecutions()
+	}
 	oldDone := m.closeStop()
 	if oldDone != nil {
 		<-oldDone

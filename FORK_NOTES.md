@@ -1,4 +1,53 @@
-# Claude Code image tool-result support
+# OpenCode Go fork changes
+
+## GLM account concurrency
+
+Fork version `0.2.2-glm-concurrency.1` retains the reasoning fixes below and
+defaults to at most six simultaneous GLM requests per selected API key. All
+upstream model IDs starting with `glm-` share that account's slots, across
+Chat Completions, Messages, and Responses clients. Other model families are
+unchanged. `glm-max-in-flight` accepts any non-negative integer, with 0 disabling the limit; the default
+`glm-queue-timeout` is 30 seconds. Queuing counts toward `request-timeout`.
+Saturated accounts queue their selected requests in FIFO order; the plugin
+does not change CPA's credential selection or move sticky sessions itself.
+
+For multiple keys in one upstream workspace, add the same `concurrency-group`
+to each matching `api-keys` entry, for example:
+
+```yaml
+api-keys:
+  - value: "${GO_KEY_A}"
+    concurrency-group: my-workspace
+  - value: "${GO_KEY_B}"
+    concurrency-group: my-workspace
+glm-max-in-flight: 6
+glm-queue-timeout: 30s
+```
+
+Account labels and filenames are not identity. Idle counters are reclaimed;
+normal reconfiguration retains active counters. Drain requests before changing
+keys' group assignments or restarting/replacing the plugin. Limits are local
+to this plugin instance; other CPA processes and direct upstream calls are
+outside its accounting and must be coordinated separately.
+
+Non-streaming calls keep their slot until the actual host callback completes,
+even if the plugin has already returned a timeout. Streams retain a slot until
+upstream close finishes, including late-start cleanup after a timeout. Missing
+reasoning retries remain within the same permit. Queue deadlines and plugin
+shutdown cancel pending waiters without sending upstream requests. Stream
+disconnect/emit failures close upstream before releasing the slot. The pinned
+native executor ABI does not expose a client cancellation context while a call
+is queued: an early client disconnect may therefore remain queued until its
+queue deadline or until admitted and the host observes the disconnect. This
+does not release active upstream slots early.
+
+Offline tests cover mixed streaming/non-streaming admission, independent
+accounts, shared workspace/model groups, reconfiguration, cancellation, and
+callbacks/streams that finish after their deadlines. Concurrent integration
+verification should use a local upstream fixture; avoid intentionally exceeding
+the production service's concurrency allowance to test this limit.
+
+## Claude Code image tool-result support
 
 The image tool-result fix from this fork was merged upstream in [PR #16](https://github.com/massiveits/opencode-go-cliproxyapi/pull/16) and is included in **v0.2.2**. This branch now incorporates upstream v0.2.2, including the maintainer's live regression test and updated contribution guidelines. The fork now additionally preserves reasoning content across Claude/Chat Completions tool turns; this newer fix is not yet part of upstream v0.2.2.
 

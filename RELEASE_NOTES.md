@@ -1,5 +1,13 @@
 ## What's Changed
 
+### GLM account concurrency
+
+- Fork `0.2.2-glm-concurrency.1`: enforce six concurrent GLM requests per selected
+  account by default, sharing slots across models/protocols. Excess requests
+  queue for up to 30 seconds. Optional `concurrency-group` combines keys from
+  one workspace. Streaming and timed-out host calls retain slots until actual
+  upstream cleanup finishes. See `FORK_NOTES.md` for scope and cancellation limits.
+
 ### Bug Fixes
 
 - Fork `0.2.2-reasoning.2`: retry once when a Chat Completions upstream explicitly rejects missing thinking history. Only missing/null reasoning fields on assistant tool calls receive single-space placeholders; original reasoning and thinking mode remain unchanged. Covers streaming and non-streaming, closes rejected streams, and preserves the original deadline.

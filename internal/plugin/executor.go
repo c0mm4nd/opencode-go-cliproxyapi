@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -106,8 +105,13 @@ func (m *Manager) handleExecute(request []byte) ([]byte, error) {
 	url := catalog.JoinUpstreamURL(res.cfg.BaseURL, res.rec.EndpointPath)
 	debugTrace("executor resolved public_model=%s upstream_model=%s route=%s url=%s key_count=%d", req.Model, res.rec.UpstreamID, res.rec.Protocol, url, len(res.cfg.APIKeys))
 	debugTrace("executor sending non-stream url=%s body_len=%d", url, len(upstreamBody))
-	ctx, cancel := context.WithTimeout(context.Background(), res.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(m.executionContext, res.cfg.RequestTimeout)
 	defer cancel()
+	ctx, permit, waitErr := m.acquireExecution(ctx, res)
+	if waitErr != nil {
+		return classEnvelope(errclass.FromNetwork(waitErr)), nil
+	}
+	defer permit.release()
 	upstreamRequest := pluginapi.HTTPRequest{
 		Method:  http.MethodPost,
 		URL:     url,
@@ -380,8 +384,19 @@ func (m *Manager) executeStream(req executorRequest) ([]byte, error) {
 
 	url := catalog.JoinUpstreamURL(res.cfg.BaseURL, res.rec.EndpointPath)
 	debugTrace("executor sending stream url=%s body_len=%d", url, len(upstreamBody))
-	ctx, cancel := context.WithTimeout(context.Background(), res.cfg.RequestTimeout)
-	defer cancel()
+	ctx, cancel := context.WithTimeout(m.executionContext, res.cfg.RequestTimeout)
+	ctx, permit, waitErr := m.acquireExecution(ctx, res)
+	if waitErr != nil {
+		cancel()
+		return classEnvelope(errclass.FromNetwork(waitErr)), nil
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			cancel()
+			permit.release()
+		}
+	}()
 	upstreamRequest := pluginapi.HTTPRequest{
 		Method:  http.MethodPost,
 		URL:     url,
@@ -414,11 +429,14 @@ func (m *Manager) executeStream(req executorRequest) ([]byte, error) {
 	if m.bridge != nil {
 		m.bridge.inFlight.Add(1)
 	}
+	transferred = true
 	go func() {
 		if m.bridge != nil {
 			defer m.bridge.inFlight.Done()
 		}
-		m.pumpStream(downID, id, res, req.SourceFormat)
+		defer permit.release()
+		defer cancel()
+		m.pumpStreamContext(ctx, downID, id, res, req.SourceFormat)
 	}()
 	return okEnvelope(struct{}{}), nil
 }
@@ -430,8 +448,17 @@ func (m *Manager) readStreamError(ctx context.Context, id string, limit int64) [
 		return nil
 	}
 	defer m.bridge.StreamClose(id)
-	stop := context.AfterFunc(ctx, func() { _ = m.bridge.StreamClose(id) })
-	defer stop()
+	permit, _ := ctx.Value(permitContextKey{}).(*accountPermit)
+	permit.retain()
+	stop := context.AfterFunc(ctx, func() {
+		defer permit.release()
+		_ = m.bridge.StreamClose(id)
+	})
+	defer func() {
+		if stop() {
+			permit.release()
+		}
+	}()
 	var body []byte
 	for {
 		chunk, readError, done, err := m.bridge.StreamRead(id)
@@ -446,6 +473,12 @@ func (m *Manager) readStreamError(ctx context.Context, id string, limit int64) [
 }
 
 func (m *Manager) pumpStream(downID, upstreamID string, res *resolvedExecution, sourceFormat string) {
+	ctx, cancel := context.WithTimeout(context.Background(), res.cfg.RequestTimeout)
+	defer cancel()
+	m.pumpStreamContext(ctx, downID, upstreamID, res, sourceFormat)
+}
+
+func (m *Manager) pumpStreamContext(ctx context.Context, downID, upstreamID string, res *resolvedExecution, sourceFormat string) {
 	var closeOnce sync.Once
 	closeStreams := func(downErrMsg string) {
 		closeOnce.Do(func() {
@@ -456,7 +489,9 @@ func (m *Manager) pumpStream(downID, upstreamID string, res *resolvedExecution, 
 	defer closeStreams("")
 
 	var aborted atomic.Bool
-	watchdog := time.AfterFunc(res.cfg.RequestTimeout, func() {
+	watchdogDone := make(chan struct{})
+	watchdog := context.AfterFunc(ctx, func() {
+		defer close(watchdogDone)
 		defer func() {
 			if r := recover(); r != nil && m.bridge != nil {
 				_ = m.bridge.Log("error", "stream watchdog panicked", nil)
@@ -465,7 +500,11 @@ func (m *Manager) pumpStream(downID, upstreamID string, res *resolvedExecution, 
 		aborted.Store(true)
 		_ = m.bridge.StreamClose(upstreamID)
 	})
-	defer watchdog.Stop()
+	defer func() {
+		if !watchdog() {
+			<-watchdogDone
+		}
+	}()
 
 	conv := newStreamConverter(res.rec.Protocol, sourceFormat, &res.tools)
 	var (

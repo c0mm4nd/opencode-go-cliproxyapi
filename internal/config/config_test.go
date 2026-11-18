@@ -55,6 +55,29 @@ func TestLoadMinimalAppliesAllDefaults(t *testing.T) {
 	if c.MaxResponseBytes != 67108864 {
 		t.Errorf("MaxResponseBytes = %d", c.MaxResponseBytes)
 	}
+	if c.GLMMaxInFlight != 6 || c.GLMQueueTimeout != 30*time.Second {
+		t.Fatalf("GLM concurrency defaults = %d / %s", c.GLMMaxInFlight, c.GLMQueueTimeout)
+	}
+}
+
+func TestGLMConcurrencyConfig(t *testing.T) {
+	c, err := Load([]byte(withKey + "glm-max-in-flight: 3\nglm-queue-timeout: 2s\n"))
+	if err != nil || c.GLMMaxInFlight != 3 || c.GLMQueueTimeout != 2*time.Second {
+		t.Fatalf("override = %+v, %v", c, err)
+	}
+	c, err = Load([]byte(withKey + "glm-max-in-flight: 12\n"))
+	if err != nil || c.GLMMaxInFlight != 12 {
+		t.Fatalf("configurable limit above 6 = %d, %v", c.GLMMaxInFlight, err)
+	}
+	c, err = Load([]byte("api-keys:\n  - value: a\n    concurrency-group: workspace\n  - value: b\n    concurrency-group: workspace\nglm-max-in-flight: 0\n"))
+	if err != nil || c.GLMMaxInFlight != 0 || c.APIKeys[0].ConcurrencyGroup != "workspace" || c.APIKeys[1].ConcurrencyGroup != "workspace" {
+		t.Fatalf("group/disable config = %+v, %v", c, err)
+	}
+	for _, doc := range []string{"glm-max-in-flight: -1\n", "glm-queue-timeout: 0s\n", "glm-queue-timeout: bad\n"} {
+		if _, err := Load([]byte(withKey + doc)); err == nil {
+			t.Fatalf("invalid GLM config accepted: %s", doc)
+		}
+	}
 }
 
 func TestLoadFullConfigHonorsEveryField(t *testing.T) {

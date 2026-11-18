@@ -166,11 +166,16 @@ var streamTimeoutGrace = 3 * time.Second
 // A callback parked inside the host therefore keeps shutdown waiting even
 // when no abandon func was supplied.
 func (b *HostBridge) callWithTimeoutResult(ctx context.Context, method string, payload []byte, grace time.Duration, abandon func(raw []byte)) ([]byte, bool, error) {
+	if ctx.Err() != nil {
+		return nil, false, fmt.Errorf("host call %s timed out", method)
+	}
 	type callResult struct {
 		raw []byte
 		err error
 	}
 	done := make(chan callResult, 1)
+	permit, _ := ctx.Value(permitContextKey{}).(*accountPermit)
+	permit.retain()
 	b.inFlight.Add(1)
 	var (
 		hs      sync.Mutex
@@ -181,6 +186,7 @@ func (b *HostBridge) callWithTimeoutResult(ctx context.Context, method string, p
 	maybeRelease := func() {
 		if exited && drained && !letGo {
 			letGo = true
+			permit.release()
 			b.inFlight.Done()
 		}
 	}
