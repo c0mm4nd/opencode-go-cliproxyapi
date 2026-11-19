@@ -11,9 +11,92 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// Opt in only against an isolated CPA and a controllable local upstream.
+// Do not flood a production account to verify the limiter.
+func TestLiveAccountConcurrency(t *testing.T) {
+	statsURL := os.Getenv("CPA_CONCURRENCY_STATS_URL")
+	if statsURL == "" {
+		t.Skip("set CPA_CONCURRENCY_STATS_URL for the isolated upstream fixture")
+	}
+	expectedPeak := 6
+	if value := os.Getenv("CPA_CONCURRENCY_EXPECTED_PEAK"); value != "" {
+		if _, err := fmt.Sscan(value, &expectedPeak); err != nil || expectedPeak <= 0 {
+			t.Fatal("invalid CPA_CONCURRENCY_EXPECTED_PEAK")
+		}
+	}
+	client := &http.Client{Timeout: 90 * time.Second}
+	var wg sync.WaitGroup
+	const requestCount = 9
+	errors := make(chan error, requestCount)
+	for i := 0; i < requestCount; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			model := modelID(envOrDefault("CPA_CONCURRENCY_MODEL", "glm-5.3"))
+			path := "/v1/chat/completions"
+			stream := i%2 == 0
+			body := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": fmt.Sprintf("concurrency-fixture-%d-%d", time.Now().UnixNano(), i)}}, "max_tokens": 64, "stream": stream}
+			if i/3 == 1 {
+				path = "/v1/messages"
+			}
+			if i/3 == 2 {
+				path = "/v1/responses"
+				body = map[string]any{"model": model, "input": fmt.Sprintf("concurrency-fixture-%d-%d", time.Now().UnixNano(), i), "max_output_tokens": 64, "stream": stream}
+			}
+			raw, _ := json.Marshal(body)
+			req, _ := http.NewRequest(http.MethodPost, cpaHost+path, bytes.NewReader(raw))
+			req.Header.Set("Authorization", "Bearer "+cpaKey)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				errors <- err
+				return
+			}
+			defer resp.Body.Close()
+			out, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errors <- err
+				return
+			}
+			if resp.StatusCode != 200 || bytes.Contains(out, []byte(`"type":"error"`)) || bytes.Contains(out, []byte(`"error":`)) {
+				errors <- fmt.Errorf("request %d: status %d: %.300s", i, resp.StatusCode, out)
+				return
+			}
+			if stream && !bytes.Contains(out, []byte("[DONE]")) && !bytes.Contains(out, []byte("message_stop")) && !bytes.Contains(out, []byte("response.completed")) {
+				errors <- fmt.Errorf("request %d: missing stream terminal", i)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
+	}
+	resp, err := client.Get(statsURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var stats struct {
+		Peak      int `json:"peak"`
+		Completed int `json:"completed"`
+		Rejected  int `json:"rejected"`
+		Keys      int `json:"keys"`
+		Protocols int `json:"protocols"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Peak != expectedPeak || stats.Completed != requestCount || stats.Rejected != 0 || stats.Keys != 2 || stats.Protocols != 1 {
+		t.Fatalf("account concurrency fixture: %+v", stats)
+	}
+	t.Logf("model=%s across 2 keys and 3 client protocols: peak=%d completed=%d rejected=%d", envOrDefault("CPA_CONCURRENCY_MODEL", "glm-5.3"), stats.Peak, stats.Completed, stats.Rejected)
+}
 
 var (
 	cpaHost   = envOrDefault("CPA_HOST", "http://localhost:8317")

@@ -55,6 +55,29 @@ func TestLoadMinimalAppliesAllDefaults(t *testing.T) {
 	if c.MaxResponseBytes != 67108864 {
 		t.Errorf("MaxResponseBytes = %d", c.MaxResponseBytes)
 	}
+	if c.MaxInFlight != 6 || c.QueueTimeout != 30*time.Second {
+		t.Fatalf("account concurrency defaults = %d / %s", c.MaxInFlight, c.QueueTimeout)
+	}
+}
+
+func TestAccountConcurrencyConfig(t *testing.T) {
+	c, err := Load([]byte(withKey + "max-in-flight: 3\nqueue-timeout: 2s\n"))
+	if err != nil || c.MaxInFlight != 3 || c.QueueTimeout != 2*time.Second {
+		t.Fatalf("override = %+v, %v", c, err)
+	}
+	c, err = Load([]byte(withKey + "max-in-flight: 12\n"))
+	if err != nil || c.MaxInFlight != 12 {
+		t.Fatalf("configurable limit above 6 = %d, %v", c.MaxInFlight, err)
+	}
+	c, err = Load([]byte("api-keys:\n  - value: a\n    concurrency-group: workspace\n  - value: b\n    concurrency-group: workspace\nmax-in-flight: 0\n"))
+	if err != nil || c.MaxInFlight != 0 || c.APIKeys[0].ConcurrencyGroup != "workspace" || c.APIKeys[1].ConcurrencyGroup != "workspace" {
+		t.Fatalf("group/disable config = %+v, %v", c, err)
+	}
+	for _, doc := range []string{"max-in-flight: -1\n", "queue-timeout: 0s\n", "queue-timeout: bad\n"} {
+		if _, err := Load([]byte(withKey + doc)); err == nil {
+			t.Fatalf("invalid account config accepted: %s", doc)
+		}
+	}
 }
 
 func TestLoadFullConfigHonorsEveryField(t *testing.T) {

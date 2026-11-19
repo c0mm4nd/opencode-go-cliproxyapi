@@ -1,5 +1,25 @@
 ## What's Changed
 
+### GLM-only concurrency scope
+
+- Fork `0.2.2-glm-concurrency.2`: limit only resolved upstream `glm-*` models; other families bypass the gate. Keep `max-in-flight` and `queue-timeout` configuration names. Quota display is unchanged.
+
+### Account-wide concurrency
+
+- Fork `0.2.2-account-concurrency.2`: apply the configurable account/group
+  concurrency gate to every model, including native Messages and Responses
+  routes. Rename settings to `max-in-flight` and `queue-timeout`; the old
+  GLM-specific settings are removed and must be migrated.
+- Upstream main `e8d3e36` (v0.2.2) was already included at the merge check.
+
+### GLM account concurrency
+
+- Fork `0.2.2-glm-concurrency.1`: enforce six concurrent GLM requests per selected
+  account by default, sharing slots across models/protocols. Excess requests
+  queue for up to 30 seconds. Optional `concurrency-group` combines keys from
+  one workspace. Streaming and timed-out host calls retain slots until actual
+  upstream cleanup finishes. See `FORK_NOTES.md` for scope and cancellation limits.
+
 ### Bug Fixes
 
 - Fork `0.2.2-reasoning.2`: retry once when a Chat Completions upstream explicitly rejects missing thinking history. Only missing/null reasoning fields on assistant tool calls receive single-space placeholders; original reasoning and thinking mode remain unchanged. Covers streaming and non-streaming, closes rejected streams, and preserves the original deadline.
