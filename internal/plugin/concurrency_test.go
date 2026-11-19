@@ -110,7 +110,7 @@ func TestAccountLimiterSurvivesReconfigureAndGroupsModels(t *testing.T) {
 	defer p.release()
 	m.HandleCall("plugin.reconfigure", lifecycleRequestBody(doc))
 	r = &resolvedExecution{cfg: m.cfg, key: "b"}
-	r.rec.UpstreamID = "gpt-5.6-luna"
+	r.rec.UpstreamID = "GLM-5.3-flash"
 	if _, q, err := m.acquireExecution(context.Background(), r); !errors.Is(err, context.DeadlineExceeded) {
 		q.release()
 		t.Fatalf("reconfigure/group/model bypassed held slot: %v", err)
@@ -143,9 +143,9 @@ func TestAccountNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
 		return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(body)}), nil
 	})
 	m.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML))
-	results := make(chan []byte, 8)
+	results := make(chan []byte, 10)
 	for i := 0; i < 7; i++ {
-		model := []string{"glm-5.3", "minimax-m3", "gpt-5.6-luna"}[i%3]
+		model := "glm-5.3"
 		go func(model string) {
 			r, _ := m.handleExecute(execReqBody("opencode-go/"+model, "openai", []byte(ccRequestBody), false))
 			results <- r
@@ -163,6 +163,18 @@ func TestAccountNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
 		t.Fatal("seventh request reached upstream")
 	case <-time.After(25 * time.Millisecond):
 	}
+	// Other families bypass this gate even when the same account's GLM slots are full.
+	for _, model := range []string{"minimax-m3", "gpt-5.6-luna"} {
+		go func(model string) {
+			r, _ := m.handleExecute(execReqBody("opencode-go/"+model, "openai", []byte(ccRequestBody), false))
+			results <- r
+		}(model)
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			t.Fatalf("saturated GLM slots blocked %s", model)
+		}
+	}
 	// CPA can select a credential not present in materialization config.
 	var req executorRequest
 	json.Unmarshal(execReqBody("opencode-go/glm-5.3", "openai", []byte(ccRequestBody), false), &req)
@@ -175,7 +187,7 @@ func TestAccountNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
 		t.Fatal("one saturated account blocked another")
 	}
 	once.Do(func() { close(release) })
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 10; i++ {
 		select {
 		case r := <-results:
 			if !decodeEnv(t, r).OK {
@@ -205,7 +217,7 @@ func TestAccountStreamsHoldSlotsUntilClose(t *testing.T) {
 			return hostOK(hostStreamReadResp{Payload: []byte("data: [DONE]\n\n"), Done: true}), nil
 		case pluginabi.MethodHostHTTPDo:
 			starts.Add(1)
-			return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(claudeResponseBody)}), nil
+			return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(ccResponseBody)}), nil
 		}
 		return hostOK(struct{}{}), nil
 	})
@@ -218,7 +230,7 @@ func TestAccountStreamsHoldSlotsUntilClose(t *testing.T) {
 	}
 	done := make(chan []byte, 1)
 	go func() {
-		r, _ := m.handleExecute(execReqBody("opencode-go/minimax-m3", "claude", []byte(claudeRequestBody), false))
+		r, _ := m.handleExecute(execReqBody("opencode-go/glm-5.3", "openai", []byte(ccRequestBody), false))
 		done <- r
 	}()
 	time.Sleep(25 * time.Millisecond)
@@ -291,10 +303,11 @@ func TestQueueTimeoutAndShutdown(t *testing.T) {
 	p.release()
 	res.rec.UpstreamID = "minimax-m3"
 	_, q, err := m.acquireExecution(context.Background(), res)
-	if err != nil || q == nil {
-		t.Fatal("non-GLM account limit was bypassed")
+	if err != nil || q != nil {
+		t.Fatal("non-GLM request was limited")
 	}
 	q.release()
+	res.rec.UpstreamID = "glm-5.3"
 	res.cfg.MaxInFlight = 0
 	if _, q, err := m.acquireExecution(context.Background(), res); err != nil || q != nil {
 		t.Fatal("disabled account limit still applied")

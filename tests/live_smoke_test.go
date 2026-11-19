@@ -37,7 +37,7 @@ func TestLiveAccountConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			model := modelID([]string{"glm-5.3", "minimax-m3", "gpt-5.6-luna"}[i%3])
+			model := modelID(envOrDefault("CPA_CONCURRENCY_MODEL", "glm-5.3"))
 			path := "/v1/chat/completions"
 			stream := i%2 == 0
 			body := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": fmt.Sprintf("concurrency-fixture-%d-%d", time.Now().UnixNano(), i)}}, "max_tokens": 64, "stream": stream}
@@ -92,10 +92,10 @@ func TestLiveAccountConcurrency(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		t.Fatal(err)
 	}
-	if stats.Peak != expectedPeak || stats.Completed != requestCount || stats.Rejected != 0 || stats.Keys != 2 || stats.Protocols != 3 {
+	if stats.Peak != expectedPeak || stats.Completed != requestCount || stats.Rejected != 0 || stats.Keys != 2 || stats.Protocols != 1 {
 		t.Fatalf("account concurrency fixture: %+v", stats)
 	}
-	t.Logf("shared account across 2 keys and 3 upstream protocols, GLM/MiniMax/GPT models: peak=%d completed=%d rejected=%d", stats.Peak, stats.Completed, stats.Rejected)
+	t.Logf("model=%s across 2 keys and 3 client protocols: peak=%d completed=%d rejected=%d", envOrDefault("CPA_CONCURRENCY_MODEL", "glm-5.3"), stats.Peak, stats.Completed, stats.Rejected)
 }
 
 var (

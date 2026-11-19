@@ -4,13 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"opencode-go-cliproxyapi/internal/config"
 )
 
-// One limiter survives reconfiguration. All models and client protocols
+// One limiter survives reconfiguration. GLM models and all client protocols
 // share an account's slots; labels/auth filenames are deliberately not identity.
 type accountLimiter struct {
 	mu     sync.Mutex
@@ -128,7 +129,7 @@ func concurrencyGroup(cfg config.Config, key string) [32]byte {
 }
 
 func (m *Manager) acquireExecution(ctx context.Context, res *resolvedExecution) (context.Context, *accountPermit, error) {
-	if res.cfg.MaxInFlight == 0 {
+	if !strings.HasPrefix(strings.ToLower(res.rec.UpstreamID), "glm-") || res.cfg.MaxInFlight == 0 {
 		return ctx, nil, nil
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, res.cfg.QueueTimeout)

@@ -108,7 +108,7 @@ plugins:
           endpoint: "/v1/messages"       # must start with /
 
       # Execution settings
-      max-in-flight: 6               # all models share each account's slots; 0 disables
+      max-in-flight: 6               # GLM models share each account's slots; 0 disables
       queue-timeout: "30s"           # maximum slot wait, within request-timeout
       request-timeout: "5m"              # upstream request timeout (default: "5m")
       max-response-bytes: 67108864       # max non-streaming response body size in bytes (default: 64 MiB)
@@ -119,7 +119,7 @@ plugins:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `max-in-flight` | `integer` | `6` | Maximum concurrent requests per account/group, shared across all models and client protocols. Any non-negative integer; 0 disables the gate. Excess requests wait in FIFO order. The configured value must fit the upstream workspace's actual allowance. |
+| `max-in-flight` | `integer` | `6` | Maximum concurrent GLM requests per account/group, shared across GLM models and client protocols. Non-GLM models bypass this gate. Any non-negative integer; 0 disables the gate. Excess requests wait in FIFO order. The configured value must fit the upstream workspace's actual allowance. |
 | `queue-timeout` | `duration` | `30s` | Maximum wait for a account slot. The total queue plus execution time is also bounded by `request-timeout`. |
 | `api-keys[].concurrency-group` | `string` | unset | Keys in the same upstream workspace must use the same explicit group. Otherwise the selected API key identifies the account, including file credentials absent from this list. Group names are not inferred from labels. |
 | `api-keys` | `[]object` | *(Required)* | List of API keys (`- value: "..."`, optional `name: "Personal"`). Supports `${ENV_VAR}` expansion. Duplicates and empty values are rejected. |

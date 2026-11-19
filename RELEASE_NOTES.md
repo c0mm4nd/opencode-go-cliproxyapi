@@ -1,5 +1,9 @@
 ## What's Changed
 
+### GLM-only concurrency scope
+
+- Fork `0.2.2-glm-concurrency.2`: limit only resolved upstream `glm-*` models; other families bypass the gate. Keep `max-in-flight` and `queue-timeout` configuration names. Quota display is unchanged.
+
 ### Account-wide concurrency
 
 - Fork `0.2.2-account-concurrency.2`: apply the configurable account/group

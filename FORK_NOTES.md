@@ -2,8 +2,8 @@
 
 ## Account concurrency
 
-Fork version `0.2.2-account-concurrency.2` retains the reasoning fixes below and
-defaults to at most six simultaneous requests per selected API key. All
+Fork version `0.2.2-glm-concurrency.2` retains the reasoning fixes below and
+defaults to at most six simultaneous GLM requests per selected API key. GLM
 models share that account's slots across Chat Completions, Messages, and
 Responses clients. `max-in-flight` accepts any non-negative integer, with 0 disabling the limit; the default
 `queue-timeout` is 30 seconds. Queuing counts toward `request-timeout`.
@@ -49,8 +49,8 @@ the production service's concurrency allowance to test this limit.
 The current branch includes upstream main `e8d3e36` (v0.2.2); merging the latest
 upstream was checked before these changes. The old GLM-specific configuration
 names are removed. Use `max-in-flight` and `queue-timeout`; migrate installed
-configuration when upgrading. These fields are account-wide, including all
-models, not a separate cap per model.
+configuration when upgrading. These fields share one cap across GLM models per account/group.
+Non-GLM models bypass the gate, using the resolved upstream model ID.
 
 ## Claude Code image tool-result support
 
