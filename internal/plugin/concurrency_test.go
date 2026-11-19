@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -94,11 +95,11 @@ func TestConcurrencyGroups(t *testing.T) {
 	}
 }
 
-func TestGLMLimiterSurvivesReconfigureAndGroupsModels(t *testing.T) {
+func TestAccountLimiterSurvivesReconfigureAndGroupsModels(t *testing.T) {
 	m, f := newTestManager(catalogResponder(true, `{"data":[{"id":"glm-5.3"},{"id":"glm-5.3-flash"}]}`))
 	t.Cleanup(func() { m.HandleCall("plugin.shutdown", nil) })
 	_ = f
-	doc := "api-keys:\n  - value: a\n    concurrency-group: workspace\n  - value: b\n    concurrency-group: workspace\nglm-max-in-flight: 1\nglm-queue-timeout: 10ms\n"
+	doc := "api-keys:\n  - value: a\n    concurrency-group: workspace\n  - value: b\n    concurrency-group: workspace\nmax-in-flight: 1\nqueue-timeout: 10ms\n"
 	m.HandleCall("plugin.register", lifecycleRequestBody(doc))
 	r := &resolvedExecution{cfg: m.cfg, key: "a"}
 	r.rec.UpstreamID = "glm-5.3"
@@ -109,14 +110,14 @@ func TestGLMLimiterSurvivesReconfigureAndGroupsModels(t *testing.T) {
 	defer p.release()
 	m.HandleCall("plugin.reconfigure", lifecycleRequestBody(doc))
 	r = &resolvedExecution{cfg: m.cfg, key: "b"}
-	r.rec.UpstreamID = "glm-5.3-flash"
+	r.rec.UpstreamID = "gpt-5.6-luna"
 	if _, q, err := m.acquireExecution(context.Background(), r); !errors.Is(err, context.DeadlineExceeded) {
 		q.release()
 		t.Fatalf("reconfigure/group/model bypassed held slot: %v", err)
 	}
 }
 
-func TestGLMNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
+func TestAccountNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
 	entered := make(chan string, 32)
 	release := make(chan struct{})
 	var once sync.Once
@@ -132,15 +133,23 @@ func TestGLMNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
 		json.Unmarshal(payload, &r)
 		entered <- r.Headers.Get("Authorization")
 		<-release
-		return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(ccResponseBody)}), nil
+		body := ccResponseBody
+		if strings.HasSuffix(r.URL, "/messages") {
+			body = claudeResponseBody
+		}
+		if strings.HasSuffix(r.URL, "/responses") {
+			body = responsesPassthrough
+		}
+		return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(body)}), nil
 	})
 	m.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML))
 	results := make(chan []byte, 8)
 	for i := 0; i < 7; i++ {
-		go func() {
-			r, _ := m.handleExecute(execReqBody("opencode-go/glm-5.3", "openai", []byte(ccRequestBody), false))
+		model := []string{"glm-5.3", "minimax-m3", "gpt-5.6-luna"}[i%3]
+		go func(model string) {
+			r, _ := m.handleExecute(execReqBody("opencode-go/"+model, "openai", []byte(ccRequestBody), false))
 			results <- r
-		}()
+		}(model)
 	}
 	for i := 0; i < 6; i++ {
 		select {
@@ -178,7 +187,7 @@ func TestGLMNonStreamConcurrencyAndOtherAccounts(t *testing.T) {
 	}
 }
 
-func TestGLMStreamsHoldSlotsUntilClose(t *testing.T) {
+func TestAccountStreamsHoldSlotsUntilClose(t *testing.T) {
 	read := make(chan struct{})
 	var release sync.Once
 	defer release.Do(func() { close(read) })
@@ -186,7 +195,7 @@ func TestGLMStreamsHoldSlotsUntilClose(t *testing.T) {
 	f := &fakeCaller{}
 	m := NewManager(NewHostBridge(f.call))
 	t.Cleanup(func() { release.Do(func() { close(read) }); m.HandleCall("plugin.shutdown", nil) })
-	f.responder = wrapWithCatalog(testCatalogJSON, func(method string, payload []byte) ([]byte, error) {
+	f.responder = wrapWithCatalog(multiRouteCatalog, func(method string, payload []byte) ([]byte, error) {
 		switch method {
 		case pluginabi.MethodHostHTTPDoStream:
 			n := starts.Add(1)
@@ -196,7 +205,7 @@ func TestGLMStreamsHoldSlotsUntilClose(t *testing.T) {
 			return hostOK(hostStreamReadResp{Payload: []byte("data: [DONE]\n\n"), Done: true}), nil
 		case pluginabi.MethodHostHTTPDo:
 			starts.Add(1)
-			return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(ccResponseBody)}), nil
+			return hostOK(pluginapi.HTTPResponse{StatusCode: 200, Body: []byte(claudeResponseBody)}), nil
 		}
 		return hostOK(struct{}{}), nil
 	})
@@ -209,7 +218,7 @@ func TestGLMStreamsHoldSlotsUntilClose(t *testing.T) {
 	}
 	done := make(chan []byte, 1)
 	go func() {
-		r, _ := m.handleExecute(execReqBody("opencode-go/glm-5.3", "claude", []byte(claudeRequestBody), false))
+		r, _ := m.handleExecute(execReqBody("opencode-go/minimax-m3", "claude", []byte(claudeRequestBody), false))
 		done <- r
 	}()
 	time.Sleep(25 * time.Millisecond)
@@ -259,9 +268,9 @@ func TestPermitSurvivesTimedOutHostCallback(t *testing.T) {
 	q.release()
 }
 
-func TestGLMQueueTimeoutAndShutdown(t *testing.T) {
+func TestQueueTimeoutAndShutdown(t *testing.T) {
 	m := NewManager(nil)
-	cfg := config.Config{GLMMaxInFlight: 1, GLMQueueTimeout: 10 * time.Millisecond}
+	cfg := config.Config{MaxInFlight: 1, QueueTimeout: 10 * time.Millisecond}
 	res := &resolvedExecution{cfg: cfg, key: "a"}
 	res.rec.UpstreamID = "glm-5.3"
 	_, p, err := m.acquireExecution(context.Background(), res)
@@ -272,7 +281,7 @@ func TestGLMQueueTimeoutAndShutdown(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("queue timeout = %v", err)
 	}
-	res.cfg.GLMQueueTimeout = time.Minute
+	res.cfg.QueueTimeout = time.Minute
 	done := make(chan error, 1)
 	go func() { _, q, err := m.acquireExecution(m.executionContext, res); q.release(); done <- err }()
 	m.handleShutdown()
@@ -281,8 +290,14 @@ func TestGLMQueueTimeoutAndShutdown(t *testing.T) {
 	}
 	p.release()
 	res.rec.UpstreamID = "minimax-m3"
-	if _, p, err := m.acquireExecution(context.Background(), res); err != nil || p != nil {
-		t.Fatal("non-GLM was limited")
+	_, q, err := m.acquireExecution(context.Background(), res)
+	if err != nil || q == nil {
+		t.Fatal("non-GLM account limit was bypassed")
+	}
+	q.release()
+	res.cfg.MaxInFlight = 0
+	if _, q, err := m.acquireExecution(context.Background(), res); err != nil || q != nil {
+		t.Fatal("disabled account limit still applied")
 	}
 }
 

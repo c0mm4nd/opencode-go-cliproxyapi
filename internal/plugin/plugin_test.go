@@ -491,8 +491,8 @@ func TestRegistrationConfigFields(t *testing.T) {
 		name string
 		typ  pluginapi.ConfigFieldType
 	}{
-		{"glm-max-in-flight", pluginapi.ConfigFieldTypeInteger},
-		{"glm-queue-timeout", pluginapi.ConfigFieldTypeString},
+		{"max-in-flight", pluginapi.ConfigFieldTypeInteger},
+		{"queue-timeout", pluginapi.ConfigFieldTypeString},
 		{"api-keys", pluginapi.ConfigFieldTypeArray},
 		{"base-url", pluginapi.ConfigFieldTypeString},
 		{"catalog-url", pluginapi.ConfigFieldTypeString},

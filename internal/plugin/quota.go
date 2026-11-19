@@ -53,8 +53,14 @@ func normalizeQuota(body []byte) (pluginapi.QuotaFetchResponse, error) {
 		return pluginapi.QuotaFetchResponse{}, fmt.Errorf("quota response invalid")
 	}
 	buckets := []pluginapi.QuotaBucket{}
-	for _, name := range []string{"rolling", "weekly", "monthly"} {
-		window, exists := decoded.Usage[name]
+	// OpenCode Go calls its five-hour window "rolling". Publish an explicit
+	// duration so the generic CPA quota card displays 5h instead of "rolling".
+	for _, spec := range []struct{ upstream, window, description string }{
+		{"rolling", "5h", "5h rolling limit"},
+		{"weekly", "weekly", ""},
+		{"monthly", "monthly", ""},
+	} {
+		window, exists := decoded.Usage[spec.upstream]
 		if !exists || window.Percent == nil {
 			continue
 		}
@@ -70,7 +76,7 @@ func normalizeQuota(body []byte) (pluginapi.QuotaFetchResponse, error) {
 			}
 			reset = parsed.UTC().Format(time.RFC3339Nano)
 		}
-		buckets = append(buckets, pluginapi.QuotaBucket{Window: name, RemainingFraction: 1 - percent/100, ResetTime: reset})
+		buckets = append(buckets, pluginapi.QuotaBucket{Window: spec.window, RemainingFraction: 1 - percent/100, ResetTime: reset, Description: spec.description})
 	}
 	if len(buckets) == 0 {
 		return pluginapi.QuotaFetchResponse{}, fmt.Errorf("quota response has no readings")

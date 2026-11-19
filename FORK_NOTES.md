@@ -1,13 +1,12 @@
 # OpenCode Go fork changes
 
-## GLM account concurrency
+## Account concurrency
 
-Fork version `0.2.2-glm-concurrency.1` retains the reasoning fixes below and
-defaults to at most six simultaneous GLM requests per selected API key. All
-upstream model IDs starting with `glm-` share that account's slots, across
-Chat Completions, Messages, and Responses clients. Other model families are
-unchanged. `glm-max-in-flight` accepts any non-negative integer, with 0 disabling the limit; the default
-`glm-queue-timeout` is 30 seconds. Queuing counts toward `request-timeout`.
+Fork version `0.2.2-account-concurrency.1` retains the reasoning fixes below and
+defaults to at most six simultaneous requests per selected API key. All
+models share that account's slots across Chat Completions, Messages, and
+Responses clients. `max-in-flight` accepts any non-negative integer, with 0 disabling the limit; the default
+`queue-timeout` is 30 seconds. Queuing counts toward `request-timeout`.
 Saturated accounts queue their selected requests in FIFO order; the plugin
 does not change CPA's credential selection or move sticky sessions itself.
 
@@ -20,8 +19,8 @@ api-keys:
     concurrency-group: my-workspace
   - value: "${GO_KEY_B}"
     concurrency-group: my-workspace
-glm-max-in-flight: 6
-glm-queue-timeout: 30s
+max-in-flight: 6
+queue-timeout: 30s
 ```
 
 Account labels and filenames are not identity. Idle counters are reclaimed;
@@ -46,6 +45,21 @@ accounts, shared workspace/model groups, reconfiguration, cancellation, and
 callbacks/streams that finish after their deadlines. Concurrent integration
 verification should use a local upstream fixture; avoid intentionally exceeding
 the production service's concurrency allowance to test this limit.
+
+## Five-hour quota display
+
+OpenCode Go's `/usage` calls the five-hour window `rolling`. The plugin now
+publishes it as `window: "5h"`, with label `5h rolling limit`, preserving the
+upstream remaining fraction and reset time. Weekly and monthly windows remain
+separate. This also lets CPA's existing generic quota card recognize the
+five-hour period and draw its timeline; no panel modification is needed.
+Missing readings stay omitted; no quota amount or reset time is invented.
+
+The current branch includes upstream main `e8d3e36` (v0.2.2); merging the latest
+upstream was checked before these changes. The old GLM-specific configuration
+names are removed. Use `max-in-flight` and `queue-timeout`; migrate installed
+configuration when upgrading. These fields are account-wide, including all
+models, not a separate cap per model.
 
 ## Claude Code image tool-result support
 

@@ -20,8 +20,8 @@ const (
 	DefaultRefreshInterval  = 15 * time.Minute
 	DefaultRequestTimeout   = 5 * time.Minute
 	DefaultMaxResponseBytes = int64(67108864) // 64 MiB
-	DefaultGLMMaxInFlight   = 6
-	DefaultGLMQueueTimeout  = 30 * time.Second
+	DefaultMaxInFlight      = 6
+	DefaultQueueTimeout     = 30 * time.Second
 )
 
 type ModelPrefix struct {
@@ -62,8 +62,8 @@ type Config struct {
 	AllowHTTP        bool
 	RequestTimeout   time.Duration
 	MaxResponseBytes int64
-	GLMMaxInFlight   int
-	GLMQueueTimeout  time.Duration
+	MaxInFlight      int
+	QueueTimeout     time.Duration
 }
 
 // rawConfig mirrors the YAML shape; pointer fields distinguish "unset"
@@ -80,8 +80,8 @@ type rawConfig struct {
 	AllowHTTP        bool                     `yaml:"allow-http"`
 	RequestTimeout   *string                  `yaml:"request-timeout"`
 	MaxResponseBytes *int64                   `yaml:"max-response-bytes"`
-	GLMMaxInFlight   *int                     `yaml:"glm-max-in-flight"`
-	GLMQueueTimeout  *string                  `yaml:"glm-queue-timeout"`
+	MaxInFlight      *int                     `yaml:"max-in-flight"`
+	QueueTimeout     *string                  `yaml:"queue-timeout"`
 }
 
 type rawPrefix struct {
@@ -137,12 +137,12 @@ func Load(yamlBytes []byte) (Config, error) {
 	if requestTimeout <= 0 {
 		return Config{}, fmt.Errorf("request-timeout: must be positive")
 	}
-	queueTimeout, err := parseDuration("glm-queue-timeout", raw.GLMQueueTimeout, DefaultGLMQueueTimeout)
+	queueTimeout, err := parseDuration("queue-timeout", raw.QueueTimeout, DefaultQueueTimeout)
 	if err != nil {
 		return Config{}, err
 	}
 	if queueTimeout <= 0 {
-		return Config{}, fmt.Errorf("glm-queue-timeout: must be positive")
+		return Config{}, fmt.Errorf("queue-timeout: must be positive")
 	}
 	c := Config{
 		BaseURL: orDefault(raw.BaseURL, DefaultBaseURL),
@@ -164,8 +164,8 @@ func Load(yamlBytes []byte) (Config, error) {
 		AllowHTTP:        raw.AllowHTTP,
 		RequestTimeout:   requestTimeout,
 		MaxResponseBytes: orDefault(raw.MaxResponseBytes, DefaultMaxResponseBytes),
-		GLMMaxInFlight:   orDefault(raw.GLMMaxInFlight, DefaultGLMMaxInFlight),
-		GLMQueueTimeout:  queueTimeout,
+		MaxInFlight:      orDefault(raw.MaxInFlight, DefaultMaxInFlight),
+		QueueTimeout:     queueTimeout,
 	}
 	if raw.CatalogURL != nil {
 		// Mirror the derived-default trim so an explicit trailing-slash
@@ -189,8 +189,8 @@ func PublicID(c Config, upstreamID string) string {
 }
 
 func (c Config) validate() error {
-	if c.GLMMaxInFlight < 0 {
-		return fmt.Errorf("glm-max-in-flight: must be non-negative (0 disables the limit)")
+	if c.MaxInFlight < 0 {
+		return fmt.Errorf("max-in-flight: must be non-negative (0 disables the limit)")
 	}
 	if err := validateURL("base-url", c.BaseURL, c.AllowHTTP); err != nil {
 		return err

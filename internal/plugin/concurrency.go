@@ -4,14 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"opencode-go-cliproxyapi/internal/config"
 )
 
-// One limiter survives reconfiguration. All GLM models and client protocols
+// One limiter survives reconfiguration. All models and client protocols
 // share an account's slots; labels/auth filenames are deliberately not identity.
 type accountLimiter struct {
 	mu     sync.Mutex
@@ -129,14 +128,14 @@ func concurrencyGroup(cfg config.Config, key string) [32]byte {
 }
 
 func (m *Manager) acquireExecution(ctx context.Context, res *resolvedExecution) (context.Context, *accountPermit, error) {
-	if !strings.HasPrefix(strings.ToLower(res.rec.UpstreamID), "glm-") || res.cfg.GLMMaxInFlight == 0 {
+	if res.cfg.MaxInFlight == 0 {
 		return ctx, nil, nil
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, res.cfg.GLMQueueTimeout)
+	waitCtx, cancel := context.WithTimeout(ctx, res.cfg.QueueTimeout)
 	defer cancel()
-	p, err := m.limiter.acquire(waitCtx, concurrencyGroup(res.cfg, res.key), res.cfg.GLMMaxInFlight)
+	p, err := m.limiter.acquire(waitCtx, concurrencyGroup(res.cfg, res.key), res.cfg.MaxInFlight)
 	if err != nil {
-		return ctx, nil, fmt.Errorf("local GLM concurrency wait failed: %w", err)
+		return ctx, nil, fmt.Errorf("local account concurrency wait failed: %w", err)
 	}
 	return context.WithValue(ctx, permitContextKey{}, p), p, nil
 }

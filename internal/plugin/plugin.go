@@ -27,7 +27,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-cliproxyapi"
-	pluginVersion = "0.2.2-glm-concurrency.1"
+	pluginVersion = "0.2.2-account-concurrency.1"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -193,8 +193,8 @@ type registrationResult struct {
 
 func pluginConfigFields() []pluginapi.ConfigField {
 	return []pluginapi.ConfigField{
-		{Name: "glm-max-in-flight", Type: pluginapi.ConfigFieldTypeInteger, Description: "Concurrent GLM requests per account/group, default 6; any non-negative integer, 0 disables the limit."},
-		{Name: "glm-queue-timeout", Type: pluginapi.ConfigFieldTypeString, Description: "Maximum GLM slot wait, default 30s; also bounded by request-timeout."},
+		{Name: "max-in-flight", Type: pluginapi.ConfigFieldTypeInteger, Description: "Concurrent requests per account/group across all models, default 6; any non-negative integer, 0 disables the limit."},
+		{Name: "queue-timeout", Type: pluginapi.ConfigFieldTypeString, Description: "Maximum account slot wait across all models, default 30s; also bounded by request-timeout."},
 		{
 			Name:        "api-keys",
 			Type:        pluginapi.ConfigFieldTypeArray,

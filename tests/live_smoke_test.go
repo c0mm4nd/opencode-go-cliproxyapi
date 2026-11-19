@@ -18,7 +18,7 @@ import (
 
 // Opt in only against an isolated CPA and a controllable local upstream.
 // Do not flood a production account to verify the limiter.
-func TestLiveGLMAccountConcurrency(t *testing.T) {
+func TestLiveAccountConcurrency(t *testing.T) {
 	statsURL := os.Getenv("CPA_CONCURRENCY_STATS_URL")
 	if statsURL == "" {
 		t.Skip("set CPA_CONCURRENCY_STATS_URL for the isolated upstream fixture")
@@ -31,20 +31,22 @@ func TestLiveGLMAccountConcurrency(t *testing.T) {
 	}
 	client := &http.Client{Timeout: 90 * time.Second}
 	var wg sync.WaitGroup
-	errors := make(chan error, 8)
-	for i := 0; i < 8; i++ {
+	const requestCount = 9
+	errors := make(chan error, requestCount)
+	for i := 0; i < requestCount; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			model := modelID("glm-5.3")
-			if i%2 == 1 {
-				model = modelID("glm-5.3-flash")
-			}
+			model := modelID([]string{"glm-5.3", "minimax-m3", "gpt-5.6-luna"}[i%3])
 			path := "/v1/chat/completions"
-			stream := i%3 == 0
+			stream := i%2 == 0
 			body := map[string]any{"model": model, "messages": []map[string]string{{"role": "user", "content": fmt.Sprintf("concurrency-fixture-%d-%d", time.Now().UnixNano(), i)}}, "max_tokens": 64, "stream": stream}
-			if i%2 == 1 {
+			if i/3 == 1 {
 				path = "/v1/messages"
+			}
+			if i/3 == 2 {
+				path = "/v1/responses"
+				body = map[string]any{"model": model, "input": fmt.Sprintf("concurrency-fixture-%d-%d", time.Now().UnixNano(), i), "max_output_tokens": 64, "stream": stream}
 			}
 			raw, _ := json.Marshal(body)
 			req, _ := http.NewRequest(http.MethodPost, cpaHost+path, bytes.NewReader(raw))
@@ -65,7 +67,7 @@ func TestLiveGLMAccountConcurrency(t *testing.T) {
 				errors <- fmt.Errorf("request %d: status %d: %.300s", i, resp.StatusCode, out)
 				return
 			}
-			if stream && !bytes.Contains(out, []byte("[DONE]")) && !bytes.Contains(out, []byte("message_stop")) {
+			if stream && !bytes.Contains(out, []byte("[DONE]")) && !bytes.Contains(out, []byte("message_stop")) && !bytes.Contains(out, []byte("response.completed")) {
 				errors <- fmt.Errorf("request %d: missing stream terminal", i)
 			}
 		}(i)
@@ -85,14 +87,78 @@ func TestLiveGLMAccountConcurrency(t *testing.T) {
 		Completed int `json:"completed"`
 		Rejected  int `json:"rejected"`
 		Keys      int `json:"keys"`
+		Protocols int `json:"protocols"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		t.Fatal(err)
 	}
-	if stats.Peak != expectedPeak || stats.Completed != 8 || stats.Rejected != 0 || stats.Keys != 2 {
+	if stats.Peak != expectedPeak || stats.Completed != requestCount || stats.Rejected != 0 || stats.Keys != 2 || stats.Protocols != 3 {
 		t.Fatalf("account concurrency fixture: %+v", stats)
 	}
-	t.Logf("shared account across 2 keys, GLM models, streams and client protocols: peak=%d completed=%d rejected=%d", stats.Peak, stats.Completed, stats.Rejected)
+	t.Logf("shared account across 2 keys and 3 upstream protocols, GLM/MiniMax/GPT models: peak=%d completed=%d rejected=%d", stats.Peak, stats.Completed, stats.Rejected)
+}
+
+func TestLiveQuotaFiveHourWindow(t *testing.T) {
+	key, index := os.Getenv("CPA_MANAGEMENT_KEY"), os.Getenv("CPA_QUOTA_AUTH_INDEX")
+	if key == "" || index == "" {
+		t.Skip("set CPA_MANAGEMENT_KEY and CPA_QUOTA_AUTH_INDEX for quota verification")
+	}
+	body, _ := json.Marshal(map[string]string{"auth_index": index})
+	req, _ := http.NewRequest(http.MethodPost, cpaHost+"/v8/management/plugins/opencode-go-cliproxyapi/quota", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("quota endpoint status: %d", resp.StatusCode)
+	}
+	var q struct {
+		Groups []struct {
+			Buckets []struct {
+				Window            string  `json:"window"`
+				RemainingFraction float64 `json:"remainingFraction"`
+				ResetTime         string  `json:"resetTime"`
+				Description       string  `json:"description"`
+			} `json:"buckets"`
+		} `json:"groups"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&q); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, g := range q.Groups {
+		for _, b := range g.Buckets {
+			if b.Window == "rolling" {
+				t.Fatal("quota endpoint still exposes unrecognized rolling window")
+			}
+			if b.Window != "5h" {
+				continue
+			}
+			found = true
+			if b.RemainingFraction < 0 || b.RemainingFraction > 1 || !strings.Contains(b.Description, "5h") {
+				t.Fatalf("invalid 5h bucket: %+v", b)
+			}
+			if b.ResetTime != "" {
+				if _, err := time.Parse(time.RFC3339Nano, b.ResetTime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if expected := os.Getenv("CPA_QUOTA_EXPECTED_FRACTION"); expected != "" {
+				var f float64
+				if _, err := fmt.Sscan(expected, &f); err != nil || f != b.RemainingFraction {
+					t.Fatalf("remaining fraction = %g, expected %s", b.RemainingFraction, expected)
+				}
+			}
+			t.Logf("5h quota remaining=%g reset=%s", b.RemainingFraction, b.ResetTime)
+		}
+	}
+	if !found {
+		t.Fatal("quota endpoint omitted the 5h allowance")
+	}
 }
 
 var (
