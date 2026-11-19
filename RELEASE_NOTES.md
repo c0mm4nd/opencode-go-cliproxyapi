@@ -1,14 +1,11 @@
 ## What's Changed
 
-### Account-wide concurrency and 5h quota display
+### Account-wide concurrency
 
-- Fork `0.2.2-account-concurrency.1`: apply the configurable account/group
+- Fork `0.2.2-account-concurrency.2`: apply the configurable account/group
   concurrency gate to every model, including native Messages and Responses
   routes. Rename settings to `max-in-flight` and `queue-timeout`; the old
   GLM-specific settings are removed and must be migrated.
-- Publish upstream `usage.rolling` as the explicit `5h` quota window, keeping
-  its remaining fraction and reset time so CPA's generic quota card displays
-  the five-hour allowance and timeline. Weekly/monthly readings remain intact.
 - Upstream main `e8d3e36` (v0.2.2) was already included at the merge check.
 
 ### GLM account concurrency

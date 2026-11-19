@@ -98,69 +98,6 @@ func TestLiveAccountConcurrency(t *testing.T) {
 	t.Logf("shared account across 2 keys and 3 upstream protocols, GLM/MiniMax/GPT models: peak=%d completed=%d rejected=%d", stats.Peak, stats.Completed, stats.Rejected)
 }
 
-func TestLiveQuotaFiveHourWindow(t *testing.T) {
-	key, index := os.Getenv("CPA_MANAGEMENT_KEY"), os.Getenv("CPA_QUOTA_AUTH_INDEX")
-	if key == "" || index == "" {
-		t.Skip("set CPA_MANAGEMENT_KEY and CPA_QUOTA_AUTH_INDEX for quota verification")
-	}
-	body, _ := json.Marshal(map[string]string{"auth_index": index})
-	req, _ := http.NewRequest(http.MethodPost, cpaHost+"/v8/management/plugins/opencode-go-cliproxyapi/quota", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("quota endpoint status: %d", resp.StatusCode)
-	}
-	var q struct {
-		Groups []struct {
-			Buckets []struct {
-				Window            string  `json:"window"`
-				RemainingFraction float64 `json:"remainingFraction"`
-				ResetTime         string  `json:"resetTime"`
-				Description       string  `json:"description"`
-			} `json:"buckets"`
-		} `json:"groups"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&q); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, g := range q.Groups {
-		for _, b := range g.Buckets {
-			if b.Window == "rolling" {
-				t.Fatal("quota endpoint still exposes unrecognized rolling window")
-			}
-			if b.Window != "5h" {
-				continue
-			}
-			found = true
-			if b.RemainingFraction < 0 || b.RemainingFraction > 1 || !strings.Contains(b.Description, "5h") {
-				t.Fatalf("invalid 5h bucket: %+v", b)
-			}
-			if b.ResetTime != "" {
-				if _, err := time.Parse(time.RFC3339Nano, b.ResetTime); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if expected := os.Getenv("CPA_QUOTA_EXPECTED_FRACTION"); expected != "" {
-				var f float64
-				if _, err := fmt.Sscan(expected, &f); err != nil || f != b.RemainingFraction {
-					t.Fatalf("remaining fraction = %g, expected %s", b.RemainingFraction, expected)
-				}
-			}
-			t.Logf("5h quota remaining=%g reset=%s", b.RemainingFraction, b.ResetTime)
-		}
-	}
-	if !found {
-		t.Fatal("quota endpoint omitted the 5h allowance")
-	}
-}
-
 var (
 	cpaHost   = envOrDefault("CPA_HOST", "http://localhost:8317")
 	cpaKey    = envOrDefault("CPA_KEY", "123")

@@ -55,9 +55,6 @@ func TestQuotaSelectedCredential(t *testing.T) {
 			t.Fatal("wrong fraction")
 		}
 	}
-	if got.Groups[0].Buckets[0].Window != "5h" || got.Groups[0].Buckets[0].Description != "5h rolling limit" || got.Groups[0].Buckets[0].ResetTime != "2026-10-01T00:00:00Z" {
-		t.Fatalf("five-hour bucket lost its label/reset: %+v", got.Groups[0].Buckets[0])
-	}
 	for _, req := range []pluginapi.QuotaFetchRequest{{Provider: "other", Attributes: map[string]string{"api_key": "selected"}}, {Provider: ProviderID}} {
 		if _, err := m.FetchQuota(context.Background(), req); err == nil {
 			t.Fatal("invalid credential accepted")
@@ -73,21 +70,6 @@ func TestQuotaValidation(t *testing.T) {
 	got, err := normalizeQuota([]byte(`{"usage":{"weekly":{"percent":12.5}}}`))
 	if err != nil || len(got.Groups[0].Buckets) != 1 || got.Groups[0].Buckets[0].RemainingFraction != 0.875 {
 		t.Fatal("partial/fractional response failed")
-	}
-}
-
-func TestQuotaFiveHourReading(t *testing.T) {
-	got, err := normalizeQuota([]byte(`{"usage":{"rolling":{"percent":12.5,"resetsAt":"2026-11-20T10:30:00+08:00"}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	b := got.Groups[0].Buckets[0]
-	if len(got.Groups[0].Buckets) != 1 || b.Window != "5h" || b.RemainingFraction != 0.875 || b.ResetTime != "2026-11-20T02:30:00Z" {
-		t.Fatalf("incorrect 5h reading: %+v", b)
-	}
-	raw, _ := json.Marshal(got)
-	if !strings.Contains(string(raw), `"window":"5h"`) || strings.Contains(string(raw), `"window":"rolling"`) {
-		t.Fatalf("quota UI payload has wrong window: %s", raw)
 	}
 }
 func TestQuotaErrorsRedacted(t *testing.T) {

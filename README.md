@@ -1,6 +1,6 @@
 # OpenCode Go CLIProxyAPI Plugin
 
-> **Based on upstream v0.2.2, with reasoning tool-turn compatibility, account concurrency limits, and 5h quota display.** The Claude Code image tool-result fix was merged upstream in [PR #16](https://github.com/massiveits/opencode-go-cliproxyapi/pull/16).
+> **Based on upstream v0.2.2, with reasoning tool-turn compatibility, account concurrency limits.** The Claude Code image tool-result fix was merged upstream in [PR #16](https://github.com/massiveits/opencode-go-cliproxyapi/pull/16).
 > The fork also preserves `reasoning_content` across Claude tool turns and retries explicitly rejected mixed histories once with blank placeholders for unavailable tool-call reasoning. See [fork notes](FORK_NOTES.md) for scope, installation, and history.
 
 
@@ -35,7 +35,7 @@ This plugin exposes OpenCode Go as a single provider (`opencode-go`) backed by a
 - **Thinking & Reasoning Support**: Maps reasoning effort across supported client and upstream formats.
 - **Dynamic Catalog Discovery**: Fetches remote model catalogs with local fallback and custom route overrides.
 - **Multi-Key Auth Scheduling**: Pools multiple API keys with CLIProxyAPI's native scheduler for rotation, retries, and error cooldowns across all protocols.
-- **Native quotas**: Five-hour (`5h`), weekly, and monthly quotas use CLIProxyAPI's generic quota endpoints and the selected credential. The five-hour window includes its remaining fraction and reset time for the generic quota card and timeline.
+- **Native quotas**: Rolling, weekly, and monthly quotas use CLIProxyAPI's generic quota endpoints and the selected credential. The separate plugin page is removed.
 
 ## Requirements
 
